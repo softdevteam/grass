@@ -5,17 +5,17 @@
  * HIR: tree, MIR: flow-graph, LIR: linear
  */
 
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
+
 use bc::bytecode::{OpCode, Function, InternalFunc};
 use core::objects::{R_BoxedValue};
 
-use std::fmt;
-use std::collections::BTreeMap;
 
-pub use rustc::mir::repr::BorrowKind;
-
-pub use rustc::mir::repr::{
+use rustc::mir::repr::{
     BasicBlock, BasicBlockData, Mir,
-    BinOp, Constant, Literal, Operand,
+    Constant, Literal, Operand,
     Lvalue, Rvalue,
     Statement, StatementKind, Terminator, TerminatorKind,
     ProjectionElem, AggregateKind,
@@ -33,11 +33,7 @@ use rustc::ty::{TyCtxt, AdtKind, VariantKind};
 use rustc_const_math::{Us32, Us64};
 
 // use syntax_pos::DUMMY_SP;
-
-
-use std::ops::{Deref, DerefMut};
-
-use std::rc::Rc;
+use rustc_data_structures::indexed_vec::Idx;
 
 
 pub type KrateTree<'a> = BTreeMap<DefId, Rc<Function>>;
@@ -66,7 +62,7 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
     }
 }
 
-// enum to avoid polluting OpCodes with later unused variants
+/// enum to avoid polluting OpCodes with later unused variants
 enum MetaOpCode {
     Goto(BasicBlock),
     GotoIf(BasicBlock),
@@ -88,7 +84,7 @@ pub struct Context<'a, 'tcx: 'a> {
 impl<'a, 'tcx> Context<'a, 'tcx> {
 
     pub fn mir_to_bytecode(&'a self, func: &Mir<'a>) -> Function {
-        let blocks = func.basic_blocks.iter().map(
+        let blocks = func.basic_blocks().iter().map(
             |bb| {
                 let mut gen = Analyser::new(self.tcx, func);
                 gen.analyse_block(bb);
@@ -143,33 +139,41 @@ impl<'a, 'tcx> Context<'a, 'tcx> {
 }
 
 
+/// Convert single function MIR to bytecode.
+///
+/// # Summary
+/// There are three different
+/// Block:
+/// Each block constists of two parts: a list of statements and a terminator.
+/// The statements are assignments of rvalues to lvalues.
+///
+///     [ lvalue := rvalue, ... ], terminator
+///
+/// Lvalues can be understood as cells. Theses inlcudes local variables,
+/// fields in structs and tuples and space on the heap.
+///
+/// Rvalues are 'single' instructions, meaning a more complex right hand side
+/// is split up into several steps using temporary variables.
+///
+/// For example:
+///
+///     a = 1 + 2 + 3
+///
+/// is represented by something like
+///
+///     tmp_0 = 1 + 2
+///     a = tmp_0 = 3
+///
+/// Terminators ensure control flow within a function and is where all
+/// branching happens. Termniators have up to two pointers to consecutive
+/// basic blocks. Thus there are no explicit loops within MIR.
+///
+
 pub struct Analyser<'a, 'tcx: 'a>{
     opcodes: Vec<MetaOpCode>,
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     func_mir: &'a Mir<'a>,
 }
-
-
-/** There are three different
- * Block:
- * Each block constists of two parts: a list of statements and a terminator.
- * The statements are assignments of rvalues to lvalues.
- * [ lvalue := rvalue, ... ], terminator
- *
- * Lvalues can be understood as cells. Theses inlcudes local variables,
- * fields in structs and tuples and space on the heap.
- *
- * Rvalues are 'single' instructions, meaning a more complex right hand side
- * is split up into several steps using temporary variables. E.g:
- * a = 1 + 2 + 3
- * is represented by something like
- * tmp_0 = 1 + 2
- * a = tmp_0 = 3
- *
- * Terminators ensure control flow within a function and is where all
- * branching happens. Termniators have up to two pointers to consecutive
- * basic blocks. Thus there are no explicit loops within MIR.
- */
 
 impl<'a, 'tcx> Analyser<'a, 'tcx> {
 
@@ -205,44 +209,49 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
         block.terminator().to_opcodes(self);
     }
 
-    fn unpack_const(&self, literal: &Literal) -> OpCode {
-        OpCode::ConstValue(match *literal {
+    fn unpack_const(&mut self, literal: &Literal) {
+        let oc = OpCode::ConstValue(match *literal {
             Literal::Value{ ref value } => {
                 use rustc_const_math::ConstInt::*;
+                //TODO: float
+
                 if let ConstVal::Integral(ref boxed) = *value {
                     match *boxed {
-                         U8(u) => R_BoxedValue::u64(u as u64),
-                        U16(u) => R_BoxedValue::u64(u as u64),
-                        U32(u) => R_BoxedValue::u64(u as u64),
-                        U64(u) => R_BoxedValue::u64(u),
+                         U8(u) => R_BoxedValue::U64(u as u64),
+                        U16(u) => R_BoxedValue::U64(u as u64),
+                        U32(u) => R_BoxedValue::U64(u as u64),
+                        U64(u) => R_BoxedValue::U64(u),
 
-                         I8(i) => R_BoxedValue::i64(i as i64),
-                        I16(i) => R_BoxedValue::i64(i as i64),
-                        I32(i) => R_BoxedValue::i64(i as i64),
-                        I64(i) => R_BoxedValue::i64(i),
+                         I8(i) => R_BoxedValue::I64(i as i64),
+                        I16(i) => R_BoxedValue::I64(i as i64),
+                        I32(i) => R_BoxedValue::I64(i as i64),
+                        I64(i) => R_BoxedValue::I64(i),
 
-                        Usize(Us32(us32)) => R_BoxedValue::usize(us32 as usize),
-                        Usize(Us64(us64)) => R_BoxedValue::usize(us64 as usize),
+                        Usize(Us32(us32)) => R_BoxedValue::Usize(us32 as usize),
+                        Usize(Us64(us64)) => R_BoxedValue::Usize(us64 as usize),
 
                         _ => panic!(format!("{:?}", boxed)),
                     }
                 } else if let ConstVal::Bool(b) = *value {
-                    R_BoxedValue::bool(b)
+                    R_BoxedValue::Bool(b)
                 } else {
+                    println!("{:?}", value);
                     unimplemented!();
                 }
             },
 
             // let x = &42; will generate a reference to a static variable
-            Literal::Item{def_id: _, ..} => {
-                unimplemented!()
+            Literal::Item{ def_id, .. } => {
+                R_BoxedValue::Func(def_id.clone())
             },
 
             // TODO: what is this doing?
             Literal::Promoted {index} => {
-                R_BoxedValue::usize(index)
+                R_BoxedValue::Usize(index.index())
             },
-        })
+        });
+
+        self.add(oc);
     }
 }
 
@@ -302,7 +311,7 @@ impl<'a> ByteCode for Terminator<'a> {
 
 
 
-                    TerminatorKind::Drop{value: ref lvalue, target: _, unwind: _} => {
+                    TerminatorKind::Drop{location: ref lvalue, target: _, unwind: _} => {
                         lvalue.as_rvalue(env);
                         OpCode::TODO("Drop")
                     },
@@ -323,18 +332,20 @@ impl<'a> ByteCode for Lvalue<'a> {
         match *self {
             //a = <rvalue>
             Lvalue::Var(n)  => {
-                let n = env.var_to_local(n as usize);
+                let n = env.var_to_local(n.index());
                 env.add(OpCode::Store(n));
             },
 
             //tmp_x = <rvalue>
             Lvalue::Temp(n) => {
-                let n = env.tmp_to_local(n as usize);
+                let n = env.tmp_to_local(n.index());
                 env.add(OpCode::Store(n));
             },
 
             Lvalue::Arg(_n)  => unreachable!(),
-            Lvalue::Static(..)  => panic!("TODO assign static"),
+            Lvalue::Static(def_id)  => {
+                env.add(OpCode::StoreStatic(def_id));
+            },
 
             Lvalue::Projection(ref proj) => {
                 match proj.elem {
@@ -364,8 +375,9 @@ impl<'a> ByteCode for Lvalue<'a> {
                         env.add(OpCode::AssignIndex);
                     },
 
-                    ProjectionElem::ConstantIndex{..} |
-                    ProjectionElem::Downcast(..) =>
+                    ProjectionElem::Subslice{..}
+                    | ProjectionElem::ConstantIndex{..}
+                    | ProjectionElem::Downcast(..) =>
                         panic!("assign projection {:?}", proj.elem),
                 }
 
@@ -379,15 +391,15 @@ impl<'a> ByteCode for Lvalue<'a> {
     fn as_rvalue(&self, env: &mut Analyser) {
         let opcode = match *self {
             Lvalue::Var(n) => {
-                let n = env.var_to_local(n as usize);
+                let n = env.var_to_local(n.index());
                 OpCode::Load(n)
             },
             Lvalue::Temp(n) => {
-                let n = env.tmp_to_local(n as usize);
+                let n = env.tmp_to_local(n.index());
                 OpCode::Load(n)
             },
             Lvalue::Arg(n) => {
-                let n = env.arg_to_local(n as usize);
+                let n = env.arg_to_local(n.index());
                 OpCode::Load(n)
             },
 
@@ -415,12 +427,14 @@ impl<'a> ByteCode for Lvalue<'a> {
 
                         OpCode::GetIndex
                     },
-                    ProjectionElem::ConstantIndex{..} |
-                    ProjectionElem::Downcast(..) => panic!("load projection {:?}", proj.elem),
+                    ProjectionElem::Subslice{ .. }
+                    | ProjectionElem::ConstantIndex{..}
+                    | ProjectionElem::Downcast(..) => panic!("load projection {:?}", proj.elem),
                 }
             },
             Lvalue::ReturnPointer => unreachable!(),
         };
+        env.add(opcode);
     }
 }
 
@@ -521,30 +535,9 @@ impl<'a> ByteCode for Operand<'a> {
             },
 
             Operand::Constant(ref constant) => {
-                if let Literal::Item{ ref def_id, .. } = constant.literal {
-                // if let Literal::Value{ ref value } = constant.literal {
-                    // println!("literal");
-                    // if let &ConstVal::Function(def_id) = value {
-                        // OpCode::LoadFunc(def_id.index.as_u32())
-                    // let mir = self.tcx.map.get(def_id.index.as_u32());
-                    // if let Node::NodeLocal(pat) = mir {
-                    //     println!("{:?}", pat.id);
-                    // }
-                    // println!("XXX: {:?} {:?}", constant.ty, constant.literal);
-                    // println!("{:?}", def_id);
-                    // self.map.map.get(def_id);
-
-                    // FIXME: create funciton object instead
-                    env.add(OpCode::LoadFunc(def_id.clone()));
-
-                    // env.add(OpCode::LoadFunc(def_id.clone()));
-                    // } else {
-                        // OpCode::TODO("const literal item")
-                    // }
-                } else {
-                    let oc = env.unpack_const(&constant.literal);
-                    env.add(oc);
-                }
+                env.unpack_const(&constant.literal);
+                // constant.literal is either Item, Value or Promoted
+                // assumption: `Item`s are functions.
             }
         }
     }
@@ -597,7 +590,15 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'
 
                 // opcodes = trace::remove_none(&opcodes);
 
+                println!("{:?}", def_index);
+                for opcode in &opcodes {
+                    println!("{:?}", opcode);
+                }
+                println!("");
+
+
                 program.krates.insert(def_index, Rc::new(opcodes));
+
 
                 if def_index.krate == 0 && item.name.as_str() == "main" {
                     main = Some(def_index);

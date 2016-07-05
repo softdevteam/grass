@@ -20,6 +20,7 @@ pub enum OpCode{
 
     Use,
 
+    StoreStatic(DefId),
 
     // Const(Constant<'tcx>),
     Static(DefId),
