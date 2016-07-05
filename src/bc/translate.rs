@@ -30,7 +30,6 @@ use rustc::hir::def_id::DefId;
 
 use rustc::ty::{TyCtxt, AdtKind, VariantKind};
 
-use rustc_const_math::{Us32, Us64};
 
 // use syntax_pos::DUMMY_SP;
 use rustc_data_structures::indexed_vec::Idx;
@@ -212,31 +211,55 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
     fn unpack_const(&mut self, literal: &Literal) {
         let oc = OpCode::ConstValue(match *literal {
             Literal::Value{ ref value } => {
+
                 use rustc_const_math::ConstInt::*;
+                use rustc_const_math::ConstFloat::*;
+                use rustc_const_math::{Us16, Us32, Us64};
+
+                use rustc::middle::const_val::ConstVal::{
+                    Integral, Float, Bool, Function, Array,
+                    Str, ByteStr, Tuple, Struct, Repeat, Char, Dummy};
+
                 //TODO: float
+                match *value {
+                    Integral( U8(u)) => R_BoxedValue::U64(u as u64),
+                    Integral(U16(u)) => R_BoxedValue::U64(u as u64),
+                    Integral(U32(u)) => R_BoxedValue::U64(u as u64),
+                    Integral(U64(u)) => R_BoxedValue::U64(u),
 
-                if let ConstVal::Integral(ref boxed) = *value {
-                    match *boxed {
-                         U8(u) => R_BoxedValue::U64(u as u64),
-                        U16(u) => R_BoxedValue::U64(u as u64),
-                        U32(u) => R_BoxedValue::U64(u as u64),
-                        U64(u) => R_BoxedValue::U64(u),
+                    Integral( I8(i)) => R_BoxedValue::I64(i as i64),
+                    Integral(I16(i)) => R_BoxedValue::I64(i as i64),
+                    Integral(I32(i)) => R_BoxedValue::I64(i as i64),
+                    Integral(I64(i)) => R_BoxedValue::I64(i),
 
-                         I8(i) => R_BoxedValue::I64(i as i64),
-                        I16(i) => R_BoxedValue::I64(i as i64),
-                        I32(i) => R_BoxedValue::I64(i as i64),
-                        I64(i) => R_BoxedValue::I64(i),
+                    Integral(Usize(Us16(us16))) => R_BoxedValue::Usize(us16 as usize),
+                    Integral(Usize(Us32(us32))) => R_BoxedValue::Usize(us32 as usize),
+                    Integral(Usize(Us64(us64))) => R_BoxedValue::Usize(us64 as usize),
 
-                        Usize(Us32(us32)) => R_BoxedValue::Usize(us32 as usize),
-                        Usize(Us64(us64)) => R_BoxedValue::Usize(us64 as usize),
+                    Integral(Isize(_i)) => unimplemented!(),
+                    Integral(Infer(_u)) => unimplemented!(),
+                    Integral(InferSigned(_i)) => unimplemented!(),
 
-                        _ => panic!(format!("{:?}", boxed)),
-                    }
-                } else if let ConstVal::Bool(b) = *value {
-                    R_BoxedValue::Bool(b)
-                } else {
-                    println!("{:?}", value);
-                    unimplemented!();
+                    Float(F32(f)) => R_BoxedValue::F64(f as f64),
+                    Float(F64(f)) => R_BoxedValue::F64(f),
+
+                    // should this ever happen?
+                    Float(FInfer{f32: _, f64: _}) => unimplemented!(),
+
+                    Bool(b) => R_BoxedValue::Bool(b),
+
+                    Str(_)
+                    | ByteStr(_)
+                    | Tuple(_)
+                    | Struct(_)
+                    | Function(_)
+                    | Array(_, _)
+                    | Repeat(_, _)
+                    | Char(_) => unimplemented!(),
+
+                    Dummy => panic!("Dummy"),
+
+
                 }
             },
 

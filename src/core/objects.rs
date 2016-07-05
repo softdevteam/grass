@@ -47,6 +47,7 @@ pub enum R_BoxedValue {
     Ptr(R_Pointer),
     I64(i64),
     U64(u64),
+    F64(f64),
     Usize(usize),
     Bool(bool),
     Struct(R_Struct),
