@@ -220,7 +220,6 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
                     Integral, Float, Bool, Function, Array,
                     Str, ByteStr, Tuple, Struct, Repeat, Char, Dummy};
 
-                //TODO: float
                 match *value {
                     Integral( U8(u)) => R_BoxedValue::U64(u as u64),
                     Integral(U16(u)) => R_BoxedValue::U64(u as u64),
@@ -237,14 +236,14 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
                     Integral(Usize(Us64(us64))) => R_BoxedValue::Usize(us64 as usize),
 
                     Integral(Isize(_i)) => unimplemented!(),
-                    Integral(Infer(_u)) => unimplemented!(),
-                    Integral(InferSigned(_i)) => unimplemented!(),
 
                     Float(F32(f)) => R_BoxedValue::F64(f as f64),
                     Float(F64(f)) => R_BoxedValue::F64(f),
 
                     // should this ever happen?
                     Float(FInfer{f32: _, f64: _}) => unimplemented!(),
+                    Integral(Infer(_u)) => unimplemented!(),
+                    Integral(InferSigned(_i)) => unimplemented!(),
 
                     Bool(b) => R_BoxedValue::Bool(b),
 
