@@ -504,6 +504,7 @@
 use std::rc::Rc;
 
 use rustc::mir::mir_map::MirMap;
+use rustc::mir::repr::BinOp;
 use rustc::ty::TyCtxt;
 use rustc::hir::def_id::DefId;
 
@@ -549,9 +550,6 @@ impl StackValue {
 
     /// Deref pointer
     fn deref(self, interp: &Interpreter) -> Self {
-        println!("{:?}", interp.stack_frames.last().unwrap().locals);
-        println!("{:?}", self);
-        println!("{:?}", self.clone().as_value(interp));
         if let StackValue::Val(R_BoxedValue::Ptr(ptr)) = self.as_value(interp) {
             StackValue::Address(ptr)
         } else {
@@ -630,9 +628,11 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                     } else {
                         return;
                     }
-                }
+                },
 
                 OpCode::Skip(n) => { pc += n; continue },
+
+                OpCode::BinOp(kind) => self.o_binop(kind),
 
                 _ => {
                     println!("XXX: {:?}", opcode);
@@ -709,6 +709,78 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
             tuple.data[idx] = self.stack.pop().unwrap().as_value(self).unwrap_value();
         }
         self.stack.push(StackValue::Val(R_BoxedValue::Struct(tuple)));
+    }
+
+    fn pop_value(&mut self) -> R_BoxedValue {
+        self.stack.pop().unwrap().as_value(self).unwrap_value()
+    }
+
+    fn o_binop(&mut self, kind: BinOp) {
+
+        use core::objects::R_BoxedValue::*;
+        use rustc::mir::repr::BinOp::*;
+
+        let right = self.pop_value();
+        let left = self.pop_value();
+
+        // copied from miri
+        macro_rules! int_binops {
+            ($v:ident, $l:ident, $r:ident) => ({
+                match kind {
+                    Add    => $v($l + $r),
+                    Sub    => $v($l - $r),
+                    Mul    => $v($l * $r),
+                    Div    => $v($l / $r),
+                    Rem    => $v($l % $r),
+                    BitXor => $v($l ^ $r),
+                    BitAnd => $v($l & $r),
+                    BitOr  => $v($l | $r),
+
+                    // TODO(solson): Can have differently-typed RHS.
+                    Shl => $v($l << $r),
+                    Shr => $v($l >> $r),
+
+                    Eq => Bool($l == $r),
+                    Ne => Bool($l != $r),
+                    Lt => Bool($l < $r),
+                    Le => Bool($l <= $r),
+                    Gt => Bool($l > $r),
+                    Ge => Bool($l >= $r),
+                }
+            })
+        }
+
+
+        let val = StackValue::Val(match(left, right) {
+            (I64(l), I64(r)) => int_binops!(I64, l, r),
+            (U64(l), U64(r)) => int_binops!(U64, l, r),
+            (Usize(l), Usize(r)) => int_binops!(Usize, l, r),
+
+            // copied from miri
+            (Bool(l), Bool(r)) => {
+                Bool(match kind {
+                    Eq => l == r,
+                    Ne => l != r,
+                    Lt => l < r,
+                    Le => l <= r,
+                    Gt => l > r,
+                    Ge => l >= r,
+                    BitOr => l | r,
+                    BitXor => l ^ r,
+                    BitAnd => l & r,
+                    Add | Sub | Mul | Div | Rem | Shl | Shr =>
+                        panic!("invalid binary operation on booleans: {:?}", kind),
+                })
+
+            },
+
+            (l, r) => {
+                println!("{:?} {:?}", l, r);
+                unimplemented!();
+            }
+        });
+        self.stack.push(val);
+
     }
 }
 
