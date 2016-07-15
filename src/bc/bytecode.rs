@@ -10,7 +10,7 @@ use core::objects::{R_BoxedValue};
 
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub enum OpCode{
     Noop,
     Pop,
@@ -32,7 +32,7 @@ pub enum OpCode{
 
     Call,
     Return,
-
+ 
     Resume, //resume stack unwinding
 
 
@@ -79,21 +79,26 @@ pub enum OpCode{
 
     Guard(Guard),
 
-    TODO(&'static str),
+    Todo(String),
 }
 
+impl OpCode {
+    pub fn todo_s(s: &str) -> Self {
+        OpCode::Todo(String::from(s))
+    }
+}
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable, PartialEq)]
 pub enum InternalFunc {
     MergePoint,
     Out,
     Print,
 }
 
-#[derive(Clone)]
+#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub struct Guard {
     pub expected: bool,
-    pub recovery: Rc<Function>,
+    // pub recovery: Rc<Function>,
     pub pc: usize,
 }
 
@@ -103,4 +108,3 @@ impl fmt::Debug for Guard {
     }
 }
 
-pub type Function = Vec<OpCode>;

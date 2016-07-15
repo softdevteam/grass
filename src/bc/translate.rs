@@ -1,22 +1,26 @@
 
 
+use rustc_serialize::{json, hex};
+
 /**
  * Uses rust's MIR to generate opcodes.
  * HIR: tree, MIR: flow-graph, LIR: linear
  */
 
+
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use bc::bytecode::{OpCode, InternalFunc};
+use core::objects::{R_BoxedValue, R_Function};
 
-use bc::bytecode::{OpCode, Function, InternalFunc};
-use core::objects::{R_BoxedValue};
-
+// XXX
+pub type Function = Vec<OpCode>;
 
 use rustc::mir::repr::{
     BasicBlock, BasicBlockData, Mir,
     Constant, Literal, Operand,
-    Lvalue, Rvalue,
+    Lvalue, Rvalue, BinOp,
     Statement, StatementKind, Terminator, TerminatorKind,
     ProjectionElem, AggregateKind,
     Field, CastKind
@@ -29,16 +33,18 @@ use rustc::hir::map::Node;
 use rustc::hir::def_id::DefId;
 
 use rustc::ty::{TyCtxt, AdtKind, VariantKind};
-
+use rustc::middle::cstore::LinkagePreference;
 
 // use syntax_pos::DUMMY_SP;
 use rustc_data_structures::indexed_vec::Idx;
 
 
-pub type KrateTree<'a> = BTreeMap<DefId, Rc<Function>>;
+pub type KrateTree<'a> = BTreeMap<DefId, Rc<R_Function>>;
 
 pub struct Program<'a, 'tcx: 'a> {
     context: &'a Context<'a, 'tcx>,
+
+    // function_table: Vec<Function>,
     pub krates: KrateTree<'a>
 }
 
@@ -47,7 +53,7 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
         Program {context: context, krates: BTreeMap::new() }
     }
 
-    fn get_func<'b>(&'b mut self, def_id: DefId) -> Rc<Function> {
+    pub fn get_func<'b>(&'b mut self, def_id: DefId) -> Rc<R_Function> {
         let context = &self.context;
 
         self.krates.entry(def_id).or_insert_with(|| {
@@ -73,16 +79,26 @@ pub trait ByteCode {
     fn as_rvalue(&self, &mut Analyser) {}
 }
 
+pub struct GrassId {
+    krate: usize,
+    func: usize,
+}
+
+pub struct CrateMap {
+    crate_map: BTreeMap<DefId, usize>,
+    func_map: BTreeMap<DefId, usize>,
+}
+
 
 pub struct Context<'a, 'tcx: 'a> {
     pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    pub map: &'a MirMap<'tcx>
+    pub map: &'a MirMap<'tcx>,
 }
 
 
 impl<'a, 'tcx> Context<'a, 'tcx> {
 
-    pub fn mir_to_bytecode(&'a self, func: &Mir<'a>) -> Function {
+    pub fn mir_to_bytecode(&'a self, func: &Mir<'a>) -> R_Function {
         let blocks = func.basic_blocks().iter().map(
             |bb| {
                 let mut gen = Analyser::new(self.tcx, func);
@@ -90,7 +106,11 @@ impl<'a, 'tcx> Context<'a, 'tcx> {
                 gen.opcodes
             }).collect();
 
-        self.flatten_blocks(&blocks, func)
+        R_Function {
+            args_cnt: func.arg_decls.len(),
+            locals_cnt: func.arg_decls.len() + func.var_decls.len() + func.temp_decls.len(),
+            opcodes: self.flatten_blocks(&blocks, func)
+        }
     }
 
 
@@ -218,7 +238,8 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
 
                 use rustc::middle::const_val::ConstVal::{
                     Integral, Float, Bool, Function, Array,
-                    Str, ByteStr, Tuple, Struct, Repeat, Char, Dummy};
+                    Str, ByteStr, Tuple, Struct, Repeat, Char, Dummy
+                };
 
                 match *value {
                     Integral( U8(u)) => R_BoxedValue::U64(u as u64),
@@ -247,8 +268,11 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
 
                     Bool(b) => R_BoxedValue::Bool(b),
 
-                    Str(_)
-                    | ByteStr(_)
+                    Str(ref interned_str) => {
+                        unimplemented!();
+                    },
+
+                    ByteStr(_)
                     | Tuple(_)
                     | Struct(_)
                     | Function(_)
@@ -257,8 +281,6 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
                     | Char(_) => unimplemented!(),
 
                     Dummy => panic!("Dummy"),
-
-
                 }
             },
 
@@ -268,6 +290,7 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
             },
 
             // TODO: what is this doing?
+            // &SOME_CONST => promoted0
             Literal::Promoted {index} => {
                 R_BoxedValue::Usize(index.index())
             },
@@ -320,10 +343,24 @@ impl<'a> ByteCode for Terminator<'a> {
                         MetaOpCode::Goto(dest.1)
                     },
                     None => {
-                        MetaOpCode::OpCode(OpCode::TODO("NO RETURN"))
+                        MetaOpCode::OpCode(OpCode::todo_s("NO RETURN"))
                     }
                 }
             },
+
+            TerminatorKind::Assert{ref cond, expected, msg: _, target, cleanup} => {
+                cond.as_rvalue(env);
+                env.add(OpCode::ConstValue(R_BoxedValue::Bool(expected)));
+                env.add(OpCode::BinOp(BinOp::Eq));
+                env.opcodes.push(MetaOpCode::GotoIf(target));
+                // XXX: handle msg
+                if let Some(bb) = cleanup {
+                    MetaOpCode::Goto(bb)
+                } else {
+                    MetaOpCode::OpCode(OpCode::Noop)
+                }
+            },
+
 
             ref other => {
                 MetaOpCode::OpCode(match *other {
@@ -331,14 +368,13 @@ impl<'a> ByteCode for Terminator<'a> {
 
                     TerminatorKind::Resume => OpCode::Resume,
 
-
-
                     TerminatorKind::Drop{location: ref lvalue, target: _, unwind: _} => {
                         lvalue.as_rvalue(env);
-                        OpCode::TODO("Drop")
+                        OpCode::todo_s("Drop")
                     },
 
-                    _ => OpCode::TODO("Terminator"),
+
+                    _ => OpCode::Todo(format!("Terminator {:?}", other)),
                 })
             }
 
@@ -471,7 +507,8 @@ impl<'a> ByteCode for Rvalue<'a> {
                 env.add(OpCode::Use);
             },
 
-            Rvalue::BinaryOp(binop, ref left, ref right) => {
+            Rvalue::CheckedBinaryOp(binop, ref left, ref right)
+            | Rvalue::BinaryOp(binop, ref left, ref right) => {
                 right.as_rvalue(env);
                 left.as_rvalue(env);
                 env.add(OpCode::BinOp(binop));
@@ -542,7 +579,10 @@ impl<'a> ByteCode for Rvalue<'a> {
                }
             },
 
-            _ => unimplemented!(),
+            ref other => {
+                println!("{:?}", other);
+                unimplemented!();
+            },
         }
     }
 }
@@ -565,7 +605,16 @@ impl<'a> ByteCode for Operand<'a> {
     }
 }
 
+
 pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'a, 'tcx>, DefId) {
+
+    let cs = &context.tcx.sess.cstore;
+    let crates = cs.used_crates(LinkagePreference::RequireStatic);
+    // for krate in &crates {
+        // println!("{:?}", krate);
+    // }
+    // println!("{:?}", crates.len());
+
 
     //map krate num -> node id
     let mut program = Program::new(context);
@@ -575,10 +624,11 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'
     for (key, func_mir) in &context.map.map {
         // let mir = map.map.get(key).unwrap();
         // println!("{:?}", mir.id);
-        let def_index = context.tcx.map.local_def_id(*key);
+        let def_id = context.tcx.map.local_def_id(*key);
+        // let func_index = defid_to_index.get_index(def_id);
 
         if let Node::NodeItem(item) = context.tcx.map.get(key.to_owned()) {
-            // println!("Function: {:?} {:?}", item.name.as_str(), def_index.index.as_u32());
+            // println!("Function: {:?} {:?}", item.name.as_str(), def_id.index.as_u32());
                 // let mut collector = FuncGen::new(&context.tcx, context.map);
                 // collector.analyse(&func_mir);
                 // for (i, block) in collector.blocks.iter().enumerate() {
@@ -587,7 +637,7 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'
                 // let blocks = optimize_blocks(&collector.blocks, func_mir);
 
                 // check for special functions
-                let mut opcodes = if item.name.as_str().starts_with("__") {
+                let mut func = if item.name.as_str().starts_with("__") {
                     let name = item.name.as_str()[2..].to_string();
                     let command = OpCode::InternalFunc(if name == "out" {
                         InternalFunc::Out
@@ -598,10 +648,17 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'
                     } else {
                         panic!("Unkown Function {:?}", name);
                     });
-
-                    vec![OpCode::Load(0), command, OpCode::Tuple(0), OpCode::Return]
+                    R_Function {
+                        args_cnt: 1,
+                        locals_cnt: 1,
+                        opcodes: vec![OpCode::Load(0), command, OpCode::Tuple(0), OpCode::Return]
+                    }
                     // vec![OpCode::StackFrame(1, 1), OpCode::Load(0), command, OpCode::Tuple(0), OpCode::Return]
                 } else {
+                    // if let Ok(encoded) = json::encode(&func_mir) {
+                    // if let Ok(encoded) = json::encode(&XYZ{data: 123, abc: ABC{inner: true}}) {
+                        // println!("{}", encoded);
+                    // }
                     context.mir_to_bytecode(func_mir)
                 };
 
@@ -612,21 +669,51 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'
 
                 // opcodes = trace::remove_none(&opcodes);
 
-                println!("{:?}", def_index);
-                for opcode in &opcodes {
-                    println!("{:?}", opcode);
+
+                debug!("#BC {:?}", def_id);
+                for opcode in &func.opcodes {
+                    debug!("#BC {:?}", opcode);
                 }
-                println!("");
+                debug!("#BC Promoted: {:?}", func_mir.promoted);
+
+                program.krates.insert(def_id, Rc::new(func));
 
 
-                program.krates.insert(def_index, Rc::new(opcodes));
-
-
-                if def_index.krate == 0 && item.name.as_str() == "main" {
-                    main = Some(def_index);
+                if def_id.krate == 0 && item.name.as_str() == "main" {
+                    main = Some(def_id);
                 }
         }
     }
+
+    {
+        // let keys: Vec<&DefId> = program.krates.keys().collect();
+        // let values: Vec<&Rc<R_Function>> = program.krates.values().collect();
+        // match json::encode(&keys) {
+        //     Ok(encoded) => println!("{}", encoded),
+        //     Err(err) => println!("{:?}", err),
+        // };
+        // match json::encode(&values) {
+        //     Ok(encoded) => println!("{}", encoded),
+        //     Err(err) => println!("{:?}", err),
+        // };
+
+        // match json::encode(&program.krates) {
+        //     Ok(encoded) => println!("{}", encoded),
+        //     Err(err) => println!("{:?}", err),
+        // };
+    }
+
+    // println!("{:?}", program.krates);
+
+
+    // for krate in crates {
+    //     let items = cs.lang_items(krate);
+    //     for item in items {
+    //         let def_id = DefId { krate: krate, index: item.0 };
+    //         program.get_func(def_id);
+    //     }
+    // }
+
 
     (program, main.unwrap())
 }

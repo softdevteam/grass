@@ -1,14 +1,24 @@
+#![allow(non_camel_case_types)]
 
 
 use std::rc::Rc;
 use rustc::hir::def_id::DefId;
 
-use bc::bytecode::Function;
+use bc::bytecode::OpCode;
+use interp::Interpreter;
+
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+pub struct R_Function {
+    pub args_cnt: usize,
+    pub locals_cnt: usize,
+    pub opcodes: Vec<OpCode>,
+}
+
 
 // Since we don't have a flat memory model, pointers can point to different
 // locations. E.g. a pointer to the stack is different from one to the heap.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub enum R_Pointer {
 
     // XXX: Can we used that? Or do we have to use Stack?
@@ -26,12 +36,24 @@ pub enum R_Pointer {
     StackField(R_StackPointer, usize),
 
     // XXX: do we just have const pointers or can we have special const-func pointers?
-    ConstFunc(Rc<Function>),
+    ConstFunc(Rc<R_Function>),
+}
+
+impl R_Pointer {
+    pub fn deref<'a>(&self, env: &'a Interpreter) -> &'a R_BoxedValue {
+        match *self {
+            R_Pointer::Stack(ptr) => {
+                &env.stack_frames[ptr.frame].locals[ptr.idx]
+            },
+
+            _ => unimplemented!(),
+        }
+    }
 }
 
 /// A pointer to a value on the stack.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, RustcEncodable, RustcDecodable, PartialEq)]
 pub struct R_StackPointer {
     pub frame: usize,
     pub idx: usize,
@@ -41,7 +63,7 @@ pub struct R_StackPointer {
 /// Boxed rust values.
 // Only these values can life on the stack. XXX: is this true?
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub enum R_BoxedValue {
     Null,
     Ptr(R_Pointer),
@@ -58,14 +80,20 @@ pub enum R_BoxedValue {
 // For not we allocate the meta information on the stack with a pointer to the
 // host-level heap.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub struct R_Struct {
     pub alive: bool,
     pub behaviour: MoveSemantics,
     pub data: Vec<R_BoxedValue>
 }
 
-#[derive(Debug, Clone)]
+impl R_Struct {
+    pub fn tuple(size: usize) -> Self {
+        R_Struct { alive: true, behaviour: MoveSemantics::Move,
+                   data: vec![R_BoxedValue::Null; size] }
+    }
+}
+
 /// MoveSemantics
 ///
 /// **FIXME:** Do we have to consider the difference between Move and Drop here?
@@ -76,6 +104,8 @@ pub struct R_Struct {
 ///
 ///     let a = X(1);
 ///     let b = a
+
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub enum MoveSemantics {
     /// **Copy semantics**
     ///
@@ -123,3 +153,27 @@ impl R_Struct {
         R_Struct { data: vec![R_BoxedValue::Null; size], alive: true, behaviour: MoveSemantics::Copy }
     }
 }
+
+
+#[derive(Debug, Clone)]
+pub struct InstructionPointer {
+    pub func: Rc<R_Function>,
+    pub pc: usize,
+}
+
+// A stack frame.
+#[derive(Debug, Clone)]
+pub struct CallFrame {
+    pub return_addr: Option<InstructionPointer>,
+    pub locals: Vec<R_BoxedValue>,
+}
+
+impl CallFrame {
+    pub fn new(return_addr: Option<InstructionPointer>, locals_len: usize) -> Self {
+        CallFrame {
+            return_addr: return_addr,
+            locals: vec![R_BoxedValue::Null; locals_len]
+        }
+    }
+}
+

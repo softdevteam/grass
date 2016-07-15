@@ -8,3 +8,4 @@ doc = false
 name = "grassc"
 
 [dependencies]
+clippy = "*"
