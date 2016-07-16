@@ -507,8 +507,13 @@ impl<'a> ByteCode for Rvalue<'a> {
                 env.add(OpCode::Use);
             },
 
-            Rvalue::CheckedBinaryOp(binop, ref left, ref right)
-            | Rvalue::BinaryOp(binop, ref left, ref right) => {
+            Rvalue::CheckedBinaryOp(binop, ref left, ref right) => {
+                right.as_rvalue(env);
+                left.as_rvalue(env);
+                env.add(OpCode::CheckedBinOp(binop));
+            },
+
+            Rvalue::BinaryOp(binop, ref left, ref right) => {
                 right.as_rvalue(env);
                 left.as_rvalue(env);
                 env.add(OpCode::BinOp(binop));

@@ -15,6 +15,7 @@ pub struct R_Function {
 }
 
 
+
 // Since we don't have a flat memory model, pointers can point to different
 // locations. E.g. a pointer to the stack is different from one to the heap.
 #[allow(non_camel_case_types)]
@@ -33,7 +34,7 @@ pub enum R_Pointer {
     /// A pointer to a field within a struct on the stack.
     // let x = &foo.bar;
     // XXX: This can be recursive, what happens with &.a.b.c ?
-    StackField(R_StackPointer, usize),
+    Nested(R_NestedPointer),
 
     // XXX: do we just have const pointers or can we have special const-func pointers?
     ConstFunc(Rc<R_Function>),
@@ -59,6 +60,11 @@ pub struct R_StackPointer {
     pub idx: usize,
 }
 
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+pub struct R_NestedPointer {
+    stack_ptr: R_StackPointer,
+    field_chain: Vec<usize>,
+}
 
 /// Boxed rust values.
 // Only these values can life on the stack. XXX: is this true?

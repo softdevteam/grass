@@ -593,6 +593,9 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
                 OpCode::Tuple(size) => self.o_tuple(size),
 
+                OpCode::TupleGet(idx) => self.o_tuple_get(idx),
+                OpCode::TupleSet(idx) => self.o_tuple_set(idx),
+
                 OpCode::Use => {
                     let val = self.stack.pop().unwrap().as_value(self);
                     self.stack.push(val);
@@ -633,6 +636,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 OpCode::Skip(n) => { pc += n; continue },
 
                 OpCode::BinOp(kind) => self.o_binop(kind),
+                OpCode::CheckedBinOp(kind) => self.o_checked_binop(kind),
 
                 _ => {
                     println!("XXX: {:?}", opcode);
@@ -711,11 +715,50 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         self.stack.push(StackValue::Val(R_BoxedValue::Struct(tuple)));
     }
 
+    fn o_tuple_set(&mut self, idx: usize) {
+        // let tuple_address = self.stack.pop().unwrap().unwrap_address();
+        // let value = self.pop_stack_value();
+
+        // match tuple_address {
+        //     Address::StackLocal(addr) => {
+        //         if let WrappedValue::Tuple(ref mut tuple) = self.w_stack[addr] {
+        //             tuple.data[idx] = value;
+        //         }
+        //     },
+        //     _ => panic!("can not load tuple at {:?}", tuple_address),
+        // }
+    }
+
+    fn o_tuple_get(&mut self, idx: usize) {
+        // self.stack.pop().unwrap().as_value()
+        // match self.stack.pop().unwrap().unwrap_address() {
+        //     Address::StackLocal(tuple_address) => {
+        //         self.stack.push(StackData::Pointer(
+        //             Address::StackComplex(tuple_address, idx)));
+        //     },
+        //     _ => unimplemented!(),
+        // }
+    }
+
     fn pop_value(&mut self) -> R_BoxedValue {
         self.stack.pop().unwrap().as_value(self).unwrap_value()
     }
 
     fn o_binop(&mut self, kind: BinOp) {
+        let val = self._do_binop(kind);
+        self.stack.push(val);
+    }
+
+    fn o_checked_binop(&mut self, kind: BinOp) {
+        //TODO: actually check binops
+        let val = self._do_binop(kind);
+        let mut tuple = R_Struct::tuple(2);
+        tuple.data[0] = R_BoxedValue::Bool(true);
+        tuple.data[1] = val.unwrap_value();
+        self.stack.push(StackValue::Val(R_BoxedValue::Struct(tuple)));
+    }
+
+    fn _do_binop(&mut self, kind: BinOp) -> StackValue {
 
         use core::objects::R_BoxedValue::*;
         use rustc::mir::repr::BinOp::*;
@@ -779,8 +822,8 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 unimplemented!();
             }
         });
-        self.stack.push(val);
 
+        val
     }
 }
 

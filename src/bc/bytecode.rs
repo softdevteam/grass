@@ -49,6 +49,7 @@ pub enum OpCode{
     Deref,
     DerefStore,
 
+    CheckedBinOp(BinOp),
     BinOp(BinOp),
 
     Array(usize), // let x = [1, 2, 3, 4];
