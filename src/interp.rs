@@ -101,6 +101,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
         loop {
             let opcode = func.opcodes[pc].clone();
+            // debug!("#ST {:?}", self.active_frame().locals);
             debug!("#EX {:?}", opcode);
 
             match opcode {
@@ -116,15 +117,6 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 OpCode::Use => {
                     let val = self.stack.pop().unwrap().into_owned();
                     self.stack.push(val);
-                    // let r_val = match self.stack.pop().unwrap() {
-                    //     R_BoxedValue::Ptr(r_ptr) => {
-                    //         r_ptr.deref(self).clone()
-                    //     },
-
-                    //     r_val => r_val,
-                    // };
-
-                    // self.stack.push(r_val);
                 },
 
                 OpCode::Ref(..) => self.o_ref(),

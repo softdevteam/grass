@@ -79,6 +79,12 @@ pub enum R_BoxedValue {
     // Array(R_Array),
 }
 
+fn null_values(n: usize) -> Vec<Rc<RefCell<R_BoxedValue>>> {
+    (0..n).map(|_|
+        Rc::new(RefCell::new(R_BoxedValue::Null))
+    ).collect()
+}
+
 // For not we allocate the meta information on the stack with a pointer to the
 // host-level heap.
 #[allow(non_camel_case_types)]
@@ -92,12 +98,12 @@ pub struct R_Struct {
 impl R_Struct {
     pub fn tuple(size: usize) -> Self {
         R_Struct { alive: true, behaviour: MoveSemantics::Move,
-                   data: vec![Rc::from(RefCell::new(R_BoxedValue::Null)); size] }
+                   data: null_values(size) }
     }
 
     pub fn with_size(size: usize) -> Self {
         R_Struct { alive: true, behaviour: MoveSemantics::Copy,
-                   data: vec![Rc::from(RefCell::new(R_BoxedValue::Null)); size] }
+                   data: null_values(size) }
     }
 }
 
@@ -174,7 +180,7 @@ impl CallFrame {
     pub fn new(return_addr: Option<InstructionPointer>, locals_len: usize) -> Self {
         CallFrame {
             return_addr: return_addr,
-            locals: vec![Rc::from(RefCell::new(R_BoxedValue::Null)); locals_len]
+            locals: null_values(locals_len)
         }
     }
 }
