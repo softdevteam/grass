@@ -2,6 +2,8 @@
 
 
 use std::rc::Rc;
+use std::cell::RefCell;
+
 use rustc::hir::def_id::DefId;
 
 use bc::bytecode::OpCode;
@@ -20,54 +22,46 @@ pub struct R_Function {
 // locations. E.g. a pointer to the stack is different from one to the heap.
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
-pub enum R_Pointer {
-
-    // XXX: Can we used that? Or do we have to use Stack?
-    // Whenever we leave the current stack (call another function)
-    // we need a reference to the stack.
-    // Data in the same frame
-    // Local(usize),
-
-    /// Simple values on stack
-    Stack(R_StackPointer),
-
-    /// A pointer to a field within a struct on the stack.
-    // let x = &foo.bar;
-    // XXX: This can be recursive, what happens with &.a.b.c ?
-    Nested(R_NestedPointer),
-
-    // XXX: do we just have const pointers or can we have special const-func pointers?
-    ConstFunc(Rc<R_Function>),
+pub struct R_Pointer {
+    pub cell: Rc<RefCell<R_BoxedValue>>,
 }
 
-impl R_Pointer {
-    pub fn deref<'a>(&self, env: &'a Interpreter) -> &'a R_BoxedValue {
-        match *self {
-            R_Pointer::Stack(ptr) => {
-                &env.stack_frames[ptr.frame].locals[ptr.idx]
-            },
+// pub enum R_Pointer {
 
-            _ => unimplemented!(),
-        }
-    }
-}
+//     // XXX: Can we used that? Or do we have to use Stack?
+//     // Whenever we leave the current stack (call another function)
+//     // we need a reference to the stack.
+//     // Data in the same frame
+//     // Local(usize),
 
-/// A pointer to a value on the stack.
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone, Copy, RustcEncodable, RustcDecodable, PartialEq)]
-pub struct R_StackPointer {
-    pub frame: usize,
-    pub idx: usize,
-}
+//     /// Simple values on stack
+//     Stack(R_StackPointer),
 
-#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
-pub struct R_NestedPointer {
-    stack_ptr: R_StackPointer,
-    field_chain: Vec<usize>,
-}
+//     /// A pointer to a field within a struct on the stack.
+//     // let x = &foo.bar;
+//     // XXX: This can be recursive, what happens with &.a.b.c ?
+//     Nested(R_NestedPointer),
 
-/// Boxed rust values.
+//     // XXX: do we just have const pointers or can we have special const-func pointers?
+//     ConstFunc(Rc<R_Function>),
+// }
+
+// impl R_Pointer {
+//     pub fn deref<'a>(&self, env: &'a Interpreter) -> &'a R_BoxedValue {
+//         match *self {
+//             R_Pointer::Stack(ptr) => {
+//                 &env.stack_frames[ptr.frame].locals[ptr.idx]
+//             },
+
+//             _ => unimplemented!(),
+//         }
+//     }
+// }
+
+
+// Boxed rust values.
 // Only these values can life on the stack. XXX: is this true?
+
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub enum R_BoxedValue {
@@ -171,14 +165,14 @@ pub struct InstructionPointer {
 #[derive(Debug, Clone)]
 pub struct CallFrame {
     pub return_addr: Option<InstructionPointer>,
-    pub locals: Vec<R_BoxedValue>,
+    pub locals: Vec<Rc<RefCell<R_BoxedValue>>>,
 }
 
 impl CallFrame {
     pub fn new(return_addr: Option<InstructionPointer>, locals_len: usize) -> Self {
         CallFrame {
             return_addr: return_addr,
-            locals: vec![R_BoxedValue::Null; locals_len]
+            locals: vec![Rc::from(RefCell::new(R_BoxedValue::Null)); locals_len]
         }
     }
 }
