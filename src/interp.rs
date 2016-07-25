@@ -85,13 +85,12 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 },
 
                 OpCode::Return => {
-                    // if let Some(ret) = self.o_return() {
-                    //     func = ret.func;
-                    //     pc = ret.pc;
-                    // } else {
-                    //     return;
-                    // }
-                    break;
+                    if let Some(ret) = self.o_return() {
+                        func = ret.func;
+                        pc = ret.pc;
+                    } else {
+                        break;
+                    }
                 },
 
                 OpCode::Skip(n) => { pc += n; continue },
@@ -121,8 +120,6 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
             pc += 1;
         }
-
-        debug!("#END {:?}", self.stack_frames[0].locals);
 
     }
 
@@ -184,10 +181,12 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    // fn o_return(&mut self) -> Option<InstructionPointer> {
-        // let old_frame = self.stack_frames.pop().unwrap();
-        // old_frame.return_addr
-    // }
+    fn o_return(&mut self) -> Option<InstructionPointer> {
+        match self.stack_frames.pop() {
+            Some(frame) => frame.return_addr,
+            None => None,
+        }
+    }
 
     fn o_tuple(&mut self, size: usize) {
         let mut tuple = R_Struct::tuple(size);
