@@ -8,7 +8,7 @@ use rustc::ty::TyCtxt;
 use rustc::hir::def_id::DefId;
 
 use bc::translate::Program;
-use bc::bytecode::OpCode;
+use bc::bytecode::{OpCode, InternalFunc};
 use core::objects::{Cell, R_BoxedValue, CallFrame,
     R_Pointer, R_Function, R_Struct,
     InstructionPointer};
@@ -75,6 +75,16 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
                 OpCode::Store(local_index) => self.o_store(local_index),
 
+                OpCode::InternalFunc(kind) => {
+                    match kind {
+                        InternalFunc::Print => {
+                            let val = self.pop_value();
+                            println!("#OUT {:?}", val);
+                        },
+                        _ => unimplemented!(),
+                    }
+                }
+
                 OpCode::Call => {
                     // load and activate func
                     func = self.o_call(func.clone(), pc);
@@ -134,10 +144,6 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         // } else {
         //     panic!("expected pointer, got {:?}", r_val);
         // }
-    // }
-
-    // fn locals(&mut self) -> &mut Vec<R_BoxedValue> {
-        // &mut self.stack_frames.last_mut().unwrap().locals
     // }
 
     fn active_frame(&self) -> &CallFrame {

@@ -128,32 +128,31 @@ impl<'a, 'tcx> Context<'a, 'tcx> {
 
         let new_target = |block: &BasicBlock| indicies[block.index()];
 
-        for block in blocks {
-            for (current, opcode) in block.iter().enumerate() {
-                let oc = match *opcode {
+        for (current, opcode) in blocks.iter().flat_map(|v| v).enumerate() {
+            let oc = match *opcode {
 
-                    MetaOpCode::Goto(ref bb) => {
-                        if new_target(bb) < current {
-                            OpCode::JumpBack(current - new_target(bb))
-                        } else {
-                            OpCode::Skip(new_target(bb) - current)
-                        }
-                    },
+                MetaOpCode::Goto(ref bb) => {
+                    if new_target(bb) < current {
+                        OpCode::JumpBack(current - new_target(bb))
+                    } else {
+                        OpCode::Skip(new_target(bb) - current)
+                    }
+                },
 
-                    MetaOpCode::GotoIf(ref bb) => {
-                        if new_target(bb) < current {
-                            OpCode::JumpBackIf(current - new_target(bb))
-                        } else {
-                            OpCode::SkipIf(new_target(bb) - current)
-                        }
-                    },
+                MetaOpCode::GotoIf(ref bb) => {
+                    if new_target(bb) < current {
+                        OpCode::JumpBackIf(current - new_target(bb))
+                    } else {
+                        OpCode::SkipIf(new_target(bb) - current)
+                    }
+                },
 
-                    MetaOpCode::OpCode(ref oc) => oc.clone(),
-                };
-                opcodes.push(oc);
-            }
+                MetaOpCode::OpCode(ref oc) => oc.clone(),
+            };
+            opcodes.push(oc);
         }
-        opcodes
+
+    opcodes
     }
 }
 
@@ -653,12 +652,13 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'
                     } else {
                         panic!("Unkown Function {:?}", name);
                     });
+
                     R_Function {
                         args_cnt: 1,
                         locals_cnt: 1,
                         opcodes: vec![OpCode::Load(0), command, OpCode::Tuple(0), OpCode::Return]
                     }
-                    // vec![OpCode::StackFrame(1, 1), OpCode::Load(0), command, OpCode::Tuple(0), OpCode::Return]
+
                 } else {
                     // if let Ok(encoded) = json::encode(&func_mir) {
                     // if let Ok(encoded) = json::encode(&XYZ{data: 123, abc: ABC{inner: true}}) {
@@ -679,7 +679,7 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'
                 for opcode in &func.opcodes {
                     debug!("#BC {:?}", opcode);
                 }
-                debug!("#BC Promoted: {:?}", func_mir.promoted);
+                debug!("#ME Promoted: {:?}", func_mir.promoted);
 
                 program.krates.insert(def_id, Rc::new(func));
 
