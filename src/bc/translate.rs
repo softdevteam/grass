@@ -1,6 +1,7 @@
-// TODO: Ref on Projections
 
 use rustc_serialize::{json, hex};
+
+// TODO: Ref on Projections
 
 /**
  * Uses rust's MIR to generate opcodes.
@@ -67,7 +68,7 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
     }
 }
 
-/// enum to avoid polluting OpCodes with later unused variants
+/// enum to avoid polluting `OpCodes` with later unused variants
 enum MetaOpCode {
     Goto(BasicBlock),
     GotoIf(BasicBlock),
@@ -109,16 +110,16 @@ impl<'a, 'tcx> Context<'a, 'tcx> {
         R_Function {
             args_cnt: func.arg_decls.len(),
             locals_cnt: func.arg_decls.len() + func.var_decls.len() + func.temp_decls.len(),
-            opcodes: self.flatten_blocks(&blocks, func)
+            opcodes: self.flatten_blocks(blocks, func)
         }
     }
 
 
     // replace Gotos with Jumps
-    fn flatten_blocks(&'a self, blocks: &Vec<Vec<MetaOpCode>>, func: &Mir<'a>) -> Function {
+    fn flatten_blocks(&'a self, blocks: Vec<Vec<MetaOpCode>>, func: &Mir<'a>) -> Function {
         let mut indicies = Vec::new();
         let mut n = 0usize;
-        for block in blocks {
+        for block in &blocks {
             indicies.push(n);
             n += block.len();
         }
@@ -285,7 +286,7 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
 
             // let x = &42; will generate a reference to a static variable
             Literal::Item{ def_id, .. } => {
-                R_BoxedValue::Func(def_id.clone())
+                R_BoxedValue::Func(def_id)
             },
 
             // TODO: what is this doing?
@@ -544,7 +545,7 @@ impl<'a> ByteCode for Rvalue<'a> {
 
                 if adt_def.adt_kind() == AdtKind::Struct {
                     // the struct definition is the first variant
-                    let ref struct_def = adt_def.variants[0];
+                    let struct_def = &adt_def.variants[0];
                     env.add(OpCode::Tuple(struct_def.fields.len()));
                     for (i, operand) in operands.iter().enumerate() {
                         operand.as_rvalue(env);

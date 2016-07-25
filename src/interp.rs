@@ -9,15 +9,75 @@ use rustc::hir::def_id::DefId;
 
 use bc::translate::Program;
 use bc::bytecode::{OpCode, InternalFunc};
-use core::objects::{Cell, R_BoxedValue, CallFrame,
+use core::objects::{R_BoxedValue, CallFrame,
     R_Pointer, R_Function, R_Struct,
     InstructionPointer};
+
+
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+pub enum StackVal {
+    Owned(R_BoxedValue),
+    Ref(Rc<RefCell<R_BoxedValue>>),
+}
+
+impl StackVal {
+
+    // to_value should be clone
+    pub fn into_owned(self) -> Self {
+        match self {
+            StackVal::Owned(..) => self,
+            StackVal::Ref(cell) => {
+                StackVal::Owned(cell.borrow().clone())
+            }
+        }
+    }
+
+    pub fn into_cell(self) -> Self {
+        match self {
+            StackVal::Owned(boxed) => StackVal::Ref(Rc::new(RefCell::new(boxed))),
+            StackVal::Ref(..) => self,
+        }
+    }
+
+    // self has to be owned
+    pub fn unwrap_value(self) -> R_BoxedValue {
+        if let StackVal::Owned(val) = self {
+            val
+        } else {
+            panic!("expected owned val");
+        }
+    }
+
+    pub fn unwrap_cell(self) -> Rc<RefCell<R_BoxedValue>> {
+        if let StackVal::Ref(boxed) = self {
+            boxed
+        } else {
+            panic!("expected ref val");
+        }
+    }
+
+    /// Address as Value
+    pub fn into_pointer(self) -> Self {
+        let cell = self.unwrap_cell();
+        StackVal::Owned(R_BoxedValue::Ptr(R_Pointer{cell:cell}))
+    }
+
+    /// Deref pointer
+    pub fn deref(self) -> Self {
+        // self contains an owned R_Pointer
+        if let R_BoxedValue::Ptr(ptr) = self.into_owned().unwrap_value() {
+            StackVal::Ref(ptr.cell)
+        } else {
+            panic!("expected val to be pointer");
+        }
+    }
+}
 
 
 
 pub struct Interpreter<'a, 'cx: 'a> {
     pub program: &'a mut Program<'a, 'cx>,
-    pub stack: Vec<Cell>,
+    pub stack: Vec<StackVal>,
     pub stack_frames: Vec<CallFrame>,
 }
 
@@ -45,7 +105,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
             match opcode {
                 OpCode::ConstValue(val) => {
-                    self.stack.push(Cell::Owned(val));
+                    self.stack.push(StackVal::Owned(val));
                 },
 
                 OpCode::Tuple(size) => self.o_tuple(size),
@@ -54,7 +114,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 OpCode::TupleSet(idx) => self.o_tuple_set(idx),
 
                 OpCode::Use => {
-                    let val = self.stack.pop().unwrap().as_value();
+                    let val = self.stack.pop().unwrap().into_owned();
                     self.stack.push(val);
                     // let r_val = match self.stack.pop().unwrap() {
                     //     R_BoxedValue::Ptr(r_ptr) => {
@@ -152,7 +212,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
     fn o_load(&mut self, local_idx: usize) {
         let cell_ptr = self.active_frame().locals[local_idx].clone();
-        self.stack.push(Cell::Ref(cell_ptr))
+        self.stack.push(StackVal::Ref(cell_ptr))
     }
 
     fn o_store(&mut self, local_idx: usize) {
@@ -162,7 +222,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
     }
 
     fn o_ref(&mut self) {
-        let addr = self.stack.pop().unwrap().as_ref();
+        let addr = self.stack.pop().unwrap().into_pointer();
         self.stack.push(addr);
     }
 
@@ -172,14 +232,13 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
     }
 
     fn o_call(&mut self, cur_func: Rc<R_Function>, cur_pc: usize) -> Rc<R_Function> {
-        if let R_BoxedValue::Func(def_id) = self.stack.pop().unwrap().as_value().unwrap_value() {
+        if let R_BoxedValue::Func(def_id) = self.stack.pop().unwrap().into_owned().unwrap_value() {
             let func = self.program.get_func(def_id);
             let return_addr = InstructionPointer{ func: cur_func, pc: cur_pc };
             let mut frame = CallFrame::new(Some(return_addr), func.locals_cnt);
             for idx in (0..func.args_cnt).rev() {
-                frame.locals[idx] = self.stack.pop().unwrap().to_ref();
+                frame.locals[idx] = self.stack.pop().unwrap().into_cell().unwrap_cell();
             }
-
             self.stack_frames.push(frame);
             func
         } else {
@@ -196,11 +255,11 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
     fn o_tuple(&mut self, size: usize) {
         let mut tuple = R_Struct::tuple(size);
-        for idx in (0..size).rev() {
+        for _idx in (0..size).rev() {
             unimplemented!();
-            // tuple.data[idx] = self.stack.pop().unwrap().as_value(self).unwrap_value();
+            // tuple.data[idx] = self.stack.pop().unwrap().into_owned(self).unwrap_value();
         }
-        self.stack.push(Cell::Owned(R_BoxedValue::Struct(tuple)));
+        self.stack.push(StackVal::Owned(R_BoxedValue::Struct(tuple)));
     }
 
     fn o_tuple_set(&mut self, idx: usize) {
@@ -219,34 +278,34 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
     }
 
     fn o_tuple_get(&mut self, idx: usize) {
-        // self.stack.pop().unwrap().as_value()
+        // self.stack.pop().unwrap().into_owned()
         // match self.stack.pop().unwrap().unwrap_address() {
         if let R_BoxedValue::Struct(r_struct) = self.pop_value() {
             let ptr = r_struct.data[idx].clone();
-            self.stack.push(ptr);
+            self.stack.push(StackVal::Ref(ptr));
         } else {
             unimplemented!()
         }
     }
 
     fn pop_value(&mut self) -> R_BoxedValue {
-        self.stack.pop().unwrap().as_value().unwrap_value()
+        self.stack.pop().unwrap().into_owned().unwrap_value()
     }
 
     fn o_binop(&mut self, kind: BinOp) {
         let val = self._do_binop(kind);
-        self.stack.push(val);
+        self.stack.push(StackVal::Owned(val));
     }
 
     fn o_checked_binop(&mut self, kind: BinOp) {
         //TODO: actually check binops
         let mut tuple = R_Struct::tuple(2);
-        tuple.data[0] = self._do_binop(kind);
-        tuple.data[1] = Cell::Owned(R_BoxedValue::Bool(true));
-        self.stack.push(Cell::Owned(R_BoxedValue::Struct(tuple)));
+        *tuple.data[0].borrow_mut() = self._do_binop(kind);
+        *tuple.data[1].borrow_mut() = R_BoxedValue::Bool(true);
+        self.stack.push(StackVal::Owned(R_BoxedValue::Struct(tuple)));
     }
 
-    fn _do_binop(&mut self, kind: BinOp) -> Cell {
+    fn _do_binop(&mut self, kind: BinOp) -> R_BoxedValue {
 
         use core::objects::R_BoxedValue::*;
         use rustc::mir::repr::BinOp::*;
@@ -254,6 +313,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         let right = self.pop_value();
         let left = self.pop_value();
 
+        debug!("#EX2 left: {:?}, right: {:?} ", left, right);
         // copied from miri
         macro_rules! int_binops {
             ($v:ident, $l:ident, $r:ident) => ({
@@ -282,7 +342,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
 
 
-        let val = Cell::Owned(match(left, right) {
+        match(left, right) {
             (I64(l), I64(r)) => int_binops!(I64, l, r),
             (U64(l), U64(r)) => int_binops!(U64, l, r),
             (Usize(l), Usize(r)) => int_binops!(Usize, l, r),
@@ -309,9 +369,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 println!("{:?} {:?}", l, r);
                 unimplemented!();
             }
-        });
-
-        val
+        }
     }
 }
 

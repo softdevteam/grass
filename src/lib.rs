@@ -3,6 +3,9 @@
 #![feature(plugin)]
 
 #![plugin(clippy)]
+#![allow(doc_markdown, unneeded_field_pattern)]
+
+#![allow(unused_imports, unused_variables, dead_code)]
 
 #[macro_use]
 extern crate log;

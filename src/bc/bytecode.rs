@@ -1,7 +1,6 @@
 
 use std::fmt;
 
-use std::rc::Rc;
 
 pub use rustc::mir::repr::{BinOp, BorrowKind, BasicBlock};
 use rustc::hir::def_id::DefId;
@@ -32,7 +31,7 @@ pub enum OpCode{
 
     Call,
     Return,
- 
+
     Resume, //resume stack unwinding
 
 

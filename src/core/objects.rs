@@ -12,59 +12,6 @@ use interp::Interpreter;
 
 
 #[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
-pub enum Cell {
-    Owned(R_BoxedValue),
-    Ref(Rc<RefCell<R_BoxedValue>>),
-}
-
-impl Cell {
-
-    // as_value should be clone
-    pub fn as_value(self) -> Self {
-        match self {
-            Cell::Owned(..) => self,
-            Cell::Ref(cell) => {
-                Cell::Owned(cell.borrow().clone())
-            }
-        }
-    }
-
-    // self has to be owned
-    pub fn unwrap_value(self) -> R_BoxedValue {
-        if let Cell::Owned(val) = self {
-            val
-        } else {
-            panic!("expected owned val");
-        }
-    }
-
-    pub fn to_ref(self) -> Rc<RefCell<R_BoxedValue>> {
-        match self {
-            Cell::Ref(cell) => cell,
-            Cell::Owned(boxed) => Rc::new(RefCell::new(boxed))
-        }
-    }
-
-    /// Address as Value
-    /// needs to be owned. return contents
-    pub fn as_ref(self) -> Self {
-        let cell = self.to_ref();
-        Cell::Owned(R_BoxedValue::Ptr(R_Pointer{cell:cell}))
-    }
-
-    /// Deref pointer
-    pub fn deref(self) -> Self {
-        // self contains an owned R_Pointer
-        if let R_BoxedValue::Ptr(ptr) = self.as_value().unwrap_value() {
-            Cell::Ref(ptr.cell)
-        } else {
-            panic!("expected val to be pointer");
-        }
-    }
-}
-
-
-#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub struct R_Function {
     pub args_cnt: usize,
     pub locals_cnt: usize,
@@ -139,13 +86,18 @@ pub enum R_BoxedValue {
 pub struct R_Struct {
     pub alive: bool,
     pub behaviour: MoveSemantics,
-    pub data: Vec<Cell>
+    pub data: Vec<Rc<RefCell<R_BoxedValue>>>
 }
 
 impl R_Struct {
     pub fn tuple(size: usize) -> Self {
         R_Struct { alive: true, behaviour: MoveSemantics::Move,
-                   data: vec![Cell::Owned(R_BoxedValue::Null); size] }
+                   data: vec![Rc::from(RefCell::new(R_BoxedValue::Null)); size] }
+    }
+
+    pub fn with_size(size: usize) -> Self {
+        R_Struct { alive: true, behaviour: MoveSemantics::Copy,
+                   data: vec![Rc::from(RefCell::new(R_BoxedValue::Null)); size] }
     }
 }
 
@@ -203,11 +155,6 @@ pub enum MoveSemantics {
     Drop,
 }
 
-impl R_Struct {
-    fn with_size(size: usize) -> Self {
-        R_Struct { data: vec![Cell::Owned(R_BoxedValue::Null); size], alive: true, behaviour: MoveSemantics::Copy }
-    }
-}
 
 
 #[derive(Debug, Clone)]
