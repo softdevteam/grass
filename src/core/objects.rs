@@ -76,6 +76,7 @@ pub enum R_BoxedValue {
     Bool(bool),
     Struct(R_Struct),
     Func(DefId),
+    Static(DefId),
     // Array(R_Array),
 }
 
@@ -104,6 +105,10 @@ impl R_Struct {
     pub fn with_size(size: usize) -> Self {
         R_Struct { alive: true, behaviour: MoveSemantics::Copy,
                    data: null_values(size) }
+    }
+
+    pub fn set(&mut self, index: usize, value: R_BoxedValue) {
+        *self.data[index].borrow_mut() = value;
     }
 }
 

@@ -110,7 +110,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 },
 
                 OpCode::Tuple(size) => self.o_tuple(size),
-
+                OpCode::TupleInit(size) => self.o_tuple_init(size),
                 OpCode::TupleGet(idx) => self.o_tuple_get(idx),
                 OpCode::TupleSet(idx) => self.o_tuple_set(idx),
 
@@ -133,9 +133,16 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                             let val = self.pop_value();
                             println!("#OUT {:?}", val);
                         },
-                        _ => unimplemented!(),
+                        InternalFunc::MergePoint => (),
+
+                        InternalFunc::Out => {
+                            let val = self.pop_value();
+                            if let R_BoxedValue::U64(n) = val {
+                                print!("{}", n as u8 as char);
+                            }
+                        },
                     }
-                }
+                },
 
                 OpCode::Call => {
                     // load and activate func
@@ -168,6 +175,8 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                         panic!("expected bool, git {:?}", val);
                     }
                 },
+
+                OpCode::Repeat(size) => self.o_repeat(size),
 
                 OpCode::BinOp(kind) => self.o_binop(kind),
                 OpCode::CheckedBinOp(kind) => self.o_checked_binop(kind),
@@ -247,11 +256,16 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
     fn o_tuple(&mut self, size: usize) {
         let mut tuple = R_Struct::tuple(size);
-        for _idx in (0..size).rev() {
-            unimplemented!();
-            // tuple.data[idx] = self.stack.pop().unwrap().into_owned(self).unwrap_value();
-        }
         self.stack.push(StackVal::Owned(R_BoxedValue::Struct(tuple)));
+    }
+
+    fn o_tuple_init(&mut self, idx: usize) {
+        let val = self.pop_value();
+        if let R_BoxedValue::Struct(ref mut tuple) = self.stack.last().unwrap().clone().unwrap_value() {
+            tuple.set(idx, val);
+        } else {
+            panic!("tuple init");
+        }
     }
 
     fn o_tuple_set(&mut self, idx: usize) {
@@ -272,16 +286,31 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
     fn o_tuple_get(&mut self, idx: usize) {
         // self.stack.pop().unwrap().into_owned()
         // match self.stack.pop().unwrap().unwrap_address() {
-        if let R_BoxedValue::Struct(r_struct) = self.pop_value() {
+        let val = self.pop_value();
+        if let R_BoxedValue::Struct(r_struct) = val{
             let ptr = r_struct.data[idx].clone();
             self.stack.push(StackVal::Ref(ptr));
         } else {
-            unimplemented!()
+            panic!("expected struct got {:?}", val);
+        }
+    }
+
+    fn load_const(&mut self, def_id: DefId) -> R_BoxedValue {
+        let func = self.program.get_func(def_id);
+        if let OpCode::ConstValue(ref val) = func.opcodes[0] {
+            val.clone()
+        } else {
+            panic!("expected const");
         }
     }
 
     fn pop_value(&mut self) -> R_BoxedValue {
-        self.stack.pop().unwrap().into_owned().unwrap_value()
+        let val = self.stack.pop().unwrap().into_owned().unwrap_value();
+        if let R_BoxedValue::Static(def_id) = val {
+            self.load_const(def_id)
+        } else {
+            val
+        }
     }
 
     fn o_binop(&mut self, kind: BinOp) {
@@ -362,6 +391,17 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 unimplemented!();
             }
         }
+    }
+
+    fn o_repeat(&mut self, size: usize) {
+        let val = self.pop_value();
+
+        let mut obj = R_Struct::with_size(size);
+        for idx in 0..size {
+            obj.set(idx, val.clone());
+        }
+
+        self.stack.push(StackVal::Owned(val));
     }
 }
 

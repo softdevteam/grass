@@ -33,11 +33,13 @@ use rustc::middle::const_val::ConstVal;
 use rustc::hir::map::Node;
 use rustc::hir::def_id::DefId;
 
-use rustc::ty::{TyCtxt, AdtKind, VariantKind};
+use rustc::ty::{TyCtxt, AdtKind, VariantKind, TyS, TypeVariants};
 use rustc::middle::cstore::LinkagePreference;
 
 // use syntax_pos::DUMMY_SP;
 use rustc_data_structures::indexed_vec::Idx;
+
+// use syntax::ast;
 
 
 pub type KrateTree<'a> = BTreeMap<DefId, Rc<R_Function>>;
@@ -228,7 +230,7 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
         block.terminator().to_opcodes(self);
     }
 
-    fn unpack_const(&mut self, literal: &Literal) {
+    fn unpack_const(&mut self, literal: &Literal, ty: &TyS) {
         let oc = OpCode::ConstValue(match *literal {
             Literal::Value{ ref value } => {
 
@@ -286,8 +288,29 @@ impl<'a, 'tcx> Analyser<'a, 'tcx> {
 
             // let x = &42; will generate a reference to a static variable
             Literal::Item{ def_id, .. } => {
-                R_BoxedValue::Func(def_id)
+                // println!("TTT {:?} - {:?}", ty.sty, def_id);
+                match ty.sty {
+                    TypeVariants::TyFnDef(..) => {
+                        R_BoxedValue::Func(def_id)
+                    },
+                    _ => R_BoxedValue::Static(def_id),
+                }
+                    // TypeVariants::TyInt(int_ty) => 
+                    // _ => R_BoxedValue::Static(def_id),
+                    // TypeVariants::
+                // }
+                    // R_BoxedValue::Static(def_id)
+                // }
             },
+
+            //                 let cid = ConstantId {
+            //                     def_id: def_id,
+            //                     substs: substs,
+            //                     kind: ConstantKind::Global,
+            //                 };
+            //                 Ok(*self.statics.get(&cid).expect("static should have been cached (rvalue)"))
+            //             }
+            //         },
 
             // TODO: what is this doing?
             // &SOME_CONST => promoted0
@@ -602,7 +625,7 @@ impl<'a> ByteCode for Operand<'a> {
             },
 
             Operand::Constant(ref constant) => {
-                env.unpack_const(&constant.literal);
+                env.unpack_const(&constant.literal, constant.ty);
                 // constant.literal is either Item, Value or Promoted
                 // assumption: `Item`s are functions.
             }
