@@ -110,6 +110,9 @@ impl R_Struct {
     pub fn set(&mut self, index: usize, value: R_BoxedValue) {
         *self.data[index].borrow_mut() = value;
     }
+    pub fn get(&mut self, index: usize) -> Rc<RefCell<R_BoxedValue>> {
+        self.data[index].clone()
+    }
 }
 
 /// MoveSemantics

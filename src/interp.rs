@@ -163,6 +163,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 },
 
                 OpCode::Skip(n) => { pc += n; continue },
+                OpCode::JumpBack(n) => { pc -= n; continue },
 
                 OpCode::SkipIf(n) => {
                     let val = self.pop_value();
@@ -175,8 +176,26 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                         panic!("expected bool, git {:?}", val);
                     }
                 },
+                OpCode::JumpBackIf(n) => {
+                    let val = self.pop_value();
+                    if let R_BoxedValue::Bool(b) = val {
+                        if b {
+                            pc -= n;
+                            continue;
+                        }
+                    } else {
+                        panic!("expected bool, git {:?}", val);
+                    }
+                },
+
+                OpCode::GetIndex => self.o_get_index(),
+                OpCode::AssignIndex => self.o_assign_index(),
+
+                OpCode::Array(size) => self.o_array(size),
 
                 OpCode::Repeat(size) => self.o_repeat(size),
+
+                OpCode::Len => self.o_len(),
 
                 OpCode::BinOp(kind) => self.o_binop(kind),
                 OpCode::CheckedBinOp(kind) => self.o_checked_binop(kind),
@@ -393,6 +412,37 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
+    fn o_get_index(&mut self) {
+        let target = self.pop_value();
+        let index = self.pop_value();
+        if let (R_BoxedValue::Struct(mut r_struct), R_BoxedValue::Usize(idx)) = (target, index) {
+            let val = r_struct.get(idx);
+            self.stack.push(StackVal::Ref(val));
+        } else {
+            panic!("error");
+        }
+    }
+
+    fn o_assign_index(&mut self) {
+        let target = self.pop_value();
+        let index = self.pop_value();
+        let val = self.pop_value();
+        if let (R_BoxedValue::Struct(mut r_struct), R_BoxedValue::Usize(idx)) = (target, index) {
+            r_struct.set(idx, val);
+        } else {
+            panic!("error");
+        }
+    }
+
+    fn o_array(&mut self, size: usize) {
+        let mut obj = R_Struct::with_size(size);
+        for idx in (0..size).rev() {
+            let val = self.pop_value();
+            obj.set(idx, val.clone());
+        }
+        self.stack.push(StackVal::Owned(R_BoxedValue::Struct(obj)));
+    }
+
     fn o_repeat(&mut self, size: usize) {
         let val = self.pop_value();
 
@@ -401,7 +451,16 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
             obj.set(idx, val.clone());
         }
 
-        self.stack.push(StackVal::Owned(val));
+        self.stack.push(StackVal::Owned(R_BoxedValue::Struct(obj)));
+    }
+
+    fn o_len(&mut self) {
+        let x = self.pop_value();
+        if let R_BoxedValue::Struct(s) = x {
+            self.stack.push(StackVal::Owned(R_BoxedValue::Usize(s.data.len())));
+        } else {
+            panic!("can't get len of {:?}", x);
+        }
     }
 }
 

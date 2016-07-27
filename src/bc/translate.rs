@@ -78,8 +78,8 @@ enum MetaOpCode {
 }
 
 pub trait ByteCode {
-    fn to_opcodes(&self, &mut Analyser) {}
-    fn as_rvalue(&self, &mut Analyser) {}
+    fn to_opcodes(&self, &mut Analyser) {unimplemented!()}
+    fn as_rvalue(&self, &mut Analyser) {unimplemented!()}
 }
 
 pub struct GrassId {
@@ -449,8 +449,7 @@ impl<'a> ByteCode for Lvalue<'a> {
                     ProjectionElem::Index(ref index) => {
                         //index
                         index.as_rvalue(env);
-
-                        //x
+                        //a
                         proj.base.as_rvalue(env);
 
                         env.add(OpCode::AssignIndex);
@@ -502,8 +501,9 @@ impl<'a> ByteCode for Lvalue<'a> {
 
                     //lvalue[index]
                     ProjectionElem::Index(ref index) => {
-                        index.to_opcodes(env);
-                        //x
+                        // [index]
+                        index.as_rvalue(env);
+                        //lvlaue
                         proj.base.as_rvalue(env);
 
                         OpCode::GetIndex
@@ -531,14 +531,14 @@ impl<'a> ByteCode for Rvalue<'a> {
             },
 
             Rvalue::CheckedBinaryOp(binop, ref left, ref right) => {
-                right.as_rvalue(env);
                 left.as_rvalue(env);
+                right.as_rvalue(env);
                 env.add(OpCode::CheckedBinOp(binop));
             },
 
             Rvalue::BinaryOp(binop, ref left, ref right) => {
-                right.as_rvalue(env);
                 left.as_rvalue(env);
+                right.as_rvalue(env);
                 env.add(OpCode::BinOp(binop));
             },
 
