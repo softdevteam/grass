@@ -601,7 +601,9 @@ impl<'a> ByteCode for Rvalue<'a> {
             Rvalue::Cast(ref kind, ref operand, ref ty) => {
                match *kind {
                     CastKind::Unsize => {
-                        panic!("todo unisze");
+                        operand.as_rvalue(env);
+                        env.add(OpCode::Unsize);
+                        // panic!("todo unsize");
                     },
                     _ => unimplemented!(),
                }
@@ -667,14 +669,12 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'
                 // check for special functions
                 let mut func = if item.name.as_str().starts_with("__") {
                     let name = item.name.as_str()[2..].to_string();
-                    let command = OpCode::InternalFunc(if name == "out" {
-                        InternalFunc::Out
-                    } else if name == "print" {
-                        InternalFunc::Print
-                    } else if name == "met_merge_point" {
-                        InternalFunc::MergePoint
-                    } else {
-                        panic!("Unkown Function {:?}", name);
+                    let command = OpCode::InternalFunc(match name.as_ref() {
+                        "out" => InternalFunc::Out,
+                        "print" => InternalFunc::Print,
+                        "met_merge_point" => InternalFunc::MergePoint,
+                        "assert" => InternalFunc::Assert,
+                        _ => panic!("Unkown Function {:?}", name),
                     });
 
                     R_Function {

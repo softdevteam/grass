@@ -48,6 +48,8 @@ pub enum OpCode{
     Deref,
     DerefStore,
 
+    Unsize,
+
     CheckedBinOp(BinOp),
     BinOp(BinOp),
 
@@ -93,6 +95,7 @@ pub enum InternalFunc {
     MergePoint,
     Out,
     Print,
+    Assert,
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq)]

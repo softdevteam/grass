@@ -114,7 +114,9 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 OpCode::TupleGet(idx) => self.o_tuple_get(idx),
                 OpCode::TupleSet(idx) => self.o_tuple_set(idx),
 
-                OpCode::Use => {
+                // XXX: proper implementation of unsize
+                OpCode::Unsize
+                | OpCode::Use => {
                     let val = self.stack.pop().unwrap().into_owned();
                     self.stack.push(val);
                 },
@@ -139,6 +141,14 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                             let val = self.pop_value();
                             if let R_BoxedValue::U64(n) = val {
                                 print!("{}", n as u8 as char);
+                            }
+                        },
+                        InternalFunc::Assert => {
+                            let val = self.pop_value();
+                            if let R_BoxedValue::Bool(b) = val {
+                                if !b {
+                                    panic!("assertion failed");
+                                }
                             }
                         },
                     }
