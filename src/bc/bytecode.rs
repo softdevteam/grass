@@ -12,6 +12,7 @@ use core::objects::{R_BoxedValue};
 #[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub enum OpCode{
     Noop,
+    Panic,
     Pop,
 
     Load(usize),

@@ -380,7 +380,7 @@ impl<'a> ByteCode for Terminator<'a> {
                 if let Some(bb) = cleanup {
                     MetaOpCode::Goto(bb)
                 } else {
-                    MetaOpCode::OpCode(OpCode::Noop)
+                    MetaOpCode::OpCode(OpCode::Panic)
                 }
             },
 

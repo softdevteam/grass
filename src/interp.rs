@@ -107,6 +107,8 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
             debug!("#EX {:?}", opcode);
 
             match opcode {
+                OpCode::Panic => panic!("assertion failed"),
+
                 OpCode::ConstValue(val) => {
                     self.stack.push(StackVal::Owned(val));
                 },
@@ -358,7 +360,8 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         //TODO: actually check binops
         let mut tuple = R_Struct::tuple(2);
         *tuple.data[0].borrow_mut() = self._do_binop(kind);
-        *tuple.data[1].borrow_mut() = R_BoxedValue::Bool(true);
+        // false == no error
+        *tuple.data[1].borrow_mut() = R_BoxedValue::Bool(false);
         self.stack.push(StackVal::Owned(R_BoxedValue::Struct(tuple)));
     }
 
