@@ -53,6 +53,9 @@ pub enum OpCode{
     CheckedBinOp(BinOp),
     BinOp(BinOp),
 
+    Not,
+    Neg,
+
     Array(usize), // let x = [1, 2, 3, 4];
     Repeat(usize), // let x = [0u32; 10];
     Len,

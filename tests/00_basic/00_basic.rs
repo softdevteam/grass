@@ -5,7 +5,10 @@ fn __assert(_: bool){}
 fn test_eq() {
     __assert(true);
     // TODO
-    // __assert(!false);
+    __assert(!false);
+    __assert(!false == true);
+    __assert(!true == false);
+    __assert(!!true);
     __assert(true == true);
     __assert(false == false);
     __assert(true != false);

@@ -215,6 +215,8 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 OpCode::BinOp(kind) => self.o_binop(kind),
                 OpCode::CheckedBinOp(kind) => self.o_checked_binop(kind),
 
+                OpCode::Not => self.o_not(),
+                OpCode::Neg => unimplemented!(),
                 OpCode::Noop => (),
 
                 _ => {
@@ -424,6 +426,14 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                 println!("{:?} {:?}", l, r);
                 unimplemented!();
             }
+        }
+    }
+
+    fn o_not(&mut self) {
+        if let R_BoxedValue::Bool(boolean) = self.pop_value() {
+            self.stack.push(StackVal::Owned(R_BoxedValue::Bool(!boolean)));
+        } else {
+            panic!("expected bool");
         }
     }
 

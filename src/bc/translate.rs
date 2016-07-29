@@ -21,7 +21,7 @@ pub type Function = Vec<OpCode>;
 use rustc::mir::repr::{
     BasicBlock, BasicBlockData, Mir,
     Constant, Literal, Operand,
-    Lvalue, Rvalue, BinOp,
+    Lvalue, Rvalue, BinOp, UnOp,
     Statement, StatementKind, Terminator, TerminatorKind,
     ProjectionElem, AggregateKind,
     Field, CastKind
@@ -607,6 +607,14 @@ impl<'a> ByteCode for Rvalue<'a> {
                     },
                     _ => unimplemented!(),
                }
+            },
+
+            Rvalue::UnaryOp(kind, ref operand) => {
+                operand.as_rvalue(env);
+                env.add(match kind {
+                    UnOp::Not => OpCode::Not,
+                    UnOp::Neg => OpCode::Neg,
+                });
             },
 
             ref other => {
