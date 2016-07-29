@@ -1,6 +1,6 @@
 
 
-fn __assert(_: bool){}
+fn __assert(b: bool){ 1/(b as u8);}
 
 
 fn second(list: &[u32]) -> u32 {

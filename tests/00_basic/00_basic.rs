@@ -1,5 +1,5 @@
 
-fn __assert(_: bool){}
+fn __assert(b: bool){ 1/(b as u8);}
 
 
 fn test_eq() {
@@ -46,10 +46,21 @@ fn test_bin_add() {
     __assert( 1 & 3 == 1);
 }
 
+fn test_block() {
+    let x = {
+        let a = 1;
+        let b = 2;
+        a + b
+    };
+
+    __assert(x == 3);
+}
+
 fn main() {
     test_eq();
     test_var();
     test_simple_binop();
     test_shift();
     test_bin_add();
+    test_block();
 }

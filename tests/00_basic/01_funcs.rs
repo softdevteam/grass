@@ -1,5 +1,5 @@
 
-fn __assert(_: bool){}
+fn __assert(b: bool){ 1/(b as u8);}
 
 fn identity(x: u32) -> u32 {
     x
