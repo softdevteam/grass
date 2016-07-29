@@ -135,16 +135,18 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
                 OpCode::InternalFunc(kind) => {
                     match kind {
-                        InternalFunc::Print => {
+                        InternalFunc::Out => {
                             let val = self.pop_value();
                             println!("#OUT {:?}", val);
                         },
                         InternalFunc::MergePoint => (),
 
-                        InternalFunc::Out => {
+                        InternalFunc::Print => {
                             let val = self.pop_value();
-                            if let R_BoxedValue::U64(n) = val {
+                            if let R_BoxedValue::Usize(n) = val {
                                 print!("{}", n as u8 as char);
+                            } else {
+                                panic!("expected number, got {:?}", val);
                             }
                         },
                         InternalFunc::Assert => {
@@ -307,7 +309,14 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
     }
 
     fn o_tuple_set(&mut self, idx: usize) {
-        unimplemented!()
+        let boxed_tuple = self.pop_value();
+        let val = self.pop_value();
+
+        if let R_BoxedValue::Struct(mut tuple) = boxed_tuple{
+            tuple.set(idx, val);
+        } else {
+            panic!("expected struct, got {:?}", boxed_tuple);
+        }
         // let tuple_address = self.stack.pop().unwrap().unwrap_address();
         // let value = self.pop_stack_value();
 
