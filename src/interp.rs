@@ -1,6 +1,8 @@
 
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::io;
+use std::io::Write;
 
 use rustc::mir::mir_map::MirMap;
 use rustc::mir::repr::BinOp;
@@ -145,10 +147,13 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                         },
                         InternalFunc::Assert => {
                             let val = self.pop_value();
-                            if let R_BoxedValue::Bool(b) = val {
-                                if !b {
-                                    panic!("assertion failed");
+                            if let R_BoxedValue::Bool(test_success) = val {
+                                if test_success {
+                                    print!(".");
+                                } else {
+                                    print!("E");
                                 }
+                                io::stdout().flush().ok().expect("Could not flush stdout");
                             }
                         },
                     }
