@@ -1,9 +1,11 @@
 
+
 use std::collections::BTreeMap;
 
 use core::objects::{R_BoxedValue, InstructionPointer};
 use bc::bytecode::{OpCode, Guard};
 use interp::Interpreter;
+
 
 
 const HOT_LOOP_COUNT: usize = 100;
@@ -120,14 +122,21 @@ impl Trace {
     }
 
     fn eval_trace(&mut self) -> Guard {
-        unimplemented!();
+        // TODO: find a better way than clone to circumvent the borrow checker
+        let trace = self.trace.clone();
 
-        loop {
-            for opcode in &self.trace {
-                match *opcode {
-                    _ => unimplemented!(),
-                }
+        loop { for opcode in &trace {
+            match *opcode {
+                OpCode::Guard(ref guard) => self.o_guard(guard.clone()),
+
+                _ => unimplemented!(),
             }
-        }
+        } }
+    }
+}
+
+// seprate opcode callbacks
+impl Trace {
+    fn o_guard(&mut self, guard: Guard) {
     }
 }
