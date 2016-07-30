@@ -20,4 +20,4 @@ extern crate rustc_data_structures;
 pub mod bc;
 pub mod core;
 pub mod interp;
-
+pub mod trace;

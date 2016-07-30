@@ -171,7 +171,7 @@ pub enum MoveSemantics {
 
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub struct InstructionPointer {
     pub func: Rc<R_Function>,
     pub pc: usize,

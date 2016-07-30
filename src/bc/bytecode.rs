@@ -5,7 +5,7 @@ use std::fmt;
 pub use rustc::mir::repr::{BinOp, BorrowKind, BasicBlock};
 use rustc::hir::def_id::DefId;
 
-use core::objects::{R_BoxedValue};
+use core::objects::{R_BoxedValue, InstructionPointer};
 
 
 
@@ -106,7 +106,8 @@ pub enum InternalFunc {
 pub struct Guard {
     pub expected: bool,
     // pub recovery: Rc<Function>,
-    pub pc: usize,
+    // pub pc: usize,
+    pub recovery: InstructionPointer
 }
 
 impl fmt::Debug for Guard {

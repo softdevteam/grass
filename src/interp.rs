@@ -15,6 +15,7 @@ use core::objects::{R_BoxedValue, CallFrame,
     R_Pointer, R_Function, R_Struct,
     InstructionPointer};
 
+use trace::Tracer;
 
 #[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub enum StackVal {
@@ -94,8 +95,9 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
     }
 
     fn run(&mut self, main: DefId) {
-        let main_func = self.program.get_func(main);
+        let mut tracer = Tracer::new();
 
+        let main_func = self.program.get_func(main);
         self.stack_frames.push(CallFrame::new(None, main_func.locals_cnt));
 
         let mut pc: usize = 0;
@@ -105,6 +107,8 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
             let opcode = func.opcodes[pc].clone();
             // debug!("#ST {:?}", self.active_frame().locals);
             debug!("#EX {:?}", opcode);
+
+            tracer.trace_opcode(self, &opcode);
 
             match opcode {
                 OpCode::Panic => panic!("assertion failed"),
@@ -139,7 +143,14 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                             let val = self.pop_value();
                             println!("#OUT {:?}", val);
                         },
-                        InternalFunc::MergePoint => (),
+                        InternalFunc::MergePoint => {
+                            let val = self.pop_value();
+                            if let R_BoxedValue::Usize(in_pc) = val {
+                                tracer.handle_mergepoint(self, in_pc);
+                            } else {
+                                panic!("expected usize got {:?}", val);
+                            }
+                        },
 
                         InternalFunc::Print => {
                             let val = self.pop_value();
@@ -238,15 +249,6 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         self.stack_frames.len() - 1
     }
 
-    // fn pop_address(&mut self) -> R_Pointer {
-        // let r_val = self.stack.pop().unwrap();
-        // if let R_BoxedValue::Ptr(ptr) = r_val {
-        //     ptr
-        // } else {
-        //     panic!("expected pointer, got {:?}", r_val);
-        // }
-    // }
-
     fn active_frame(&self) -> &CallFrame {
         self.stack_frames.last().unwrap()
     }
@@ -317,22 +319,9 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         } else {
             panic!("expected struct, got {:?}", boxed_tuple);
         }
-        // let tuple_address = self.stack.pop().unwrap().unwrap_address();
-        // let value = self.pop_stack_value();
-
-        // match tuple_address {
-        //     Address::StackLocal(addr) => {
-        //         if let WrappedValue::Tuple(ref mut tuple) = self.w_stack[addr] {
-        //             tuple.data[idx] = value;
-        //         }
-        //     },
-        //     _ => panic!("can not load tuple at {:?}", tuple_address),
-        // }
     }
 
     fn o_tuple_get(&mut self, idx: usize) {
-        // self.stack.pop().unwrap().into_owned()
-        // match self.stack.pop().unwrap().unwrap_address() {
         let val = self.pop_value();
         if let R_BoxedValue::Struct(r_struct) = val{
             let ptr = r_struct.data[idx].clone();
@@ -499,7 +488,12 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
             panic!("can't get len of {:?}", x);
         }
     }
+
+    fn trace(&mut self) {
+    }
 }
+
+
 
 pub fn run<'a, 'tcx>(
         program: &'a mut Program<'a, 'tcx>,
