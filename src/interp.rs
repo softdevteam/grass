@@ -68,10 +68,11 @@ impl StackVal {
     /// Deref pointer
     pub fn deref(self) -> Self {
         // self contains an owned R_Pointer
-        if let R_BoxedValue::Ptr(ptr) = self.into_owned().unwrap_value() {
+        let val = self.into_owned().unwrap_value();
+        if let R_BoxedValue::Ptr(ptr) = val {
             StackVal::Ref(ptr.cell)
         } else {
-            panic!("expected val to be pointer");
+            panic!("expected val to be pointer, got {:?}", val);
         }
     }
 }
@@ -79,9 +80,15 @@ impl StackVal {
 
 
 pub struct Interpreter<'a, 'cx: 'a> {
+    // TODO: program is mutable as we can load functions dynamically
     pub program: &'a mut Program<'a, 'cx>,
+
+    // working stack of the interpreter
     pub stack: Vec<StackVal>,
+
+    // the stack of the interpreted program, consisting of frames
     pub stack_frames: Vec<CallFrame>,
+
 }
 
 /// Baseline interpreter.
@@ -108,7 +115,8 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
             // debug!("#ST {:?}", self.active_frame().locals);
             debug!("#EX {:?}", opcode);
 
-            tracer.trace_opcode(self, &opcode);
+            tracer.trace_opcode(self, &opcode,
+                InstructionPointer{ func:func.clone(), pc: pc });
 
             match opcode {
                 OpCode::Panic => panic!("assertion failed"),
@@ -146,7 +154,11 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
                         InternalFunc::MergePoint => {
                             let val = self.pop_value();
                             if let R_BoxedValue::Usize(in_pc) = val {
-                                tracer.handle_mergepoint(self, in_pc);
+                                if let Some(ip@InstructionPointer{..}) = tracer.handle_mergepoint(self, in_pc) {
+                                    func = ip.func;
+                                    pc = ip.pc;
+                                    continue;
+                                }
                             } else {
                                 panic!("expected usize got {:?}", val);
                             }
@@ -245,36 +257,36 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
 
     }
 
-    fn stack_ptr(&self) -> usize {
+    pub fn stack_ptr(&self) -> usize {
         self.stack_frames.len() - 1
     }
 
-    fn active_frame(&self) -> &CallFrame {
+    pub fn active_frame(&self) -> &CallFrame {
         self.stack_frames.last().unwrap()
     }
 
-    fn o_load(&mut self, local_idx: usize) {
+    pub fn o_load(&mut self, local_idx: usize) {
         let cell_ptr = self.active_frame().locals[local_idx].clone();
         self.stack.push(StackVal::Ref(cell_ptr))
     }
 
-    fn o_store(&mut self, local_idx: usize) {
+    pub fn o_store(&mut self, local_idx: usize) {
         let val = self.stack.pop().unwrap();
         let mut cell = self.active_frame().locals[local_idx].borrow_mut();
         *cell = val.unwrap_value();
     }
 
-    fn o_ref(&mut self) {
+    pub fn o_ref(&mut self) {
         let addr = self.stack.pop().unwrap().into_pointer();
         self.stack.push(addr);
     }
 
-    fn o_deref(&mut self) {
+    pub fn o_deref(&mut self) {
         let address = self.stack.pop().unwrap().deref();
         self.stack.push(address);
     }
 
-    fn o_call(&mut self, cur_func: Rc<R_Function>, cur_pc: usize) -> Rc<R_Function> {
+    pub fn o_call(&mut self, cur_func: Rc<R_Function>, cur_pc: usize) -> Rc<R_Function> {
         if let R_BoxedValue::Func(def_id) = self.stack.pop().unwrap().into_owned().unwrap_value() {
             let func = self.program.get_func(def_id);
             let return_addr = InstructionPointer{ func: cur_func, pc: cur_pc };
@@ -289,19 +301,19 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn o_return(&mut self) -> Option<InstructionPointer> {
+    pub fn o_return(&mut self) -> Option<InstructionPointer> {
         match self.stack_frames.pop() {
             Some(frame) => frame.return_addr,
             None => None,
         }
     }
 
-    fn o_tuple(&mut self, size: usize) {
+    pub fn o_tuple(&mut self, size: usize) {
         let mut tuple = R_Struct::tuple(size);
         self.stack.push(StackVal::Owned(R_BoxedValue::Struct(tuple)));
     }
 
-    fn o_tuple_init(&mut self, idx: usize) {
+    pub fn o_tuple_init(&mut self, idx: usize) {
         let val = self.pop_value();
         if let R_BoxedValue::Struct(ref mut tuple) = self.stack.last().unwrap().clone().unwrap_value() {
             tuple.set(idx, val);
@@ -310,7 +322,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn o_tuple_set(&mut self, idx: usize) {
+    pub fn o_tuple_set(&mut self, idx: usize) {
         let boxed_tuple = self.pop_value();
         let val = self.pop_value();
 
@@ -321,7 +333,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn o_tuple_get(&mut self, idx: usize) {
+    pub fn o_tuple_get(&mut self, idx: usize) {
         let val = self.pop_value();
         if let R_BoxedValue::Struct(r_struct) = val{
             let ptr = r_struct.data[idx].clone();
@@ -331,7 +343,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn load_const(&mut self, def_id: DefId) -> R_BoxedValue {
+    pub fn load_const(&mut self, def_id: DefId) -> R_BoxedValue {
         let func = self.program.get_func(def_id);
         if let OpCode::ConstValue(ref val) = func.opcodes[0] {
             val.clone()
@@ -340,7 +352,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn pop_value(&mut self) -> R_BoxedValue {
+    pub fn pop_value(&mut self) -> R_BoxedValue {
         let val = self.stack.pop().unwrap().into_owned().unwrap_value();
         if let R_BoxedValue::Static(def_id) = val {
             self.load_const(def_id)
@@ -349,12 +361,12 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn o_binop(&mut self, kind: BinOp) {
+    pub fn o_binop(&mut self, kind: BinOp) {
         let val = self._do_binop(kind);
         self.stack.push(StackVal::Owned(val));
     }
 
-    fn o_checked_binop(&mut self, kind: BinOp) {
+    pub fn o_checked_binop(&mut self, kind: BinOp) {
         //TODO: actually check binops
         let mut tuple = R_Struct::tuple(2);
         *tuple.data[0].borrow_mut() = self._do_binop(kind);
@@ -430,7 +442,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn o_not(&mut self) {
+    pub fn o_not(&mut self) {
         if let R_BoxedValue::Bool(boolean) = self.pop_value() {
             self.stack.push(StackVal::Owned(R_BoxedValue::Bool(!boolean)));
         } else {
@@ -438,7 +450,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn o_get_index(&mut self) {
+    pub fn o_get_index(&mut self) {
         let target = self.pop_value();
         let index = self.pop_value();
         if let (R_BoxedValue::Struct(mut r_struct), R_BoxedValue::Usize(idx)) = (target, index) {
@@ -449,7 +461,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn o_assign_index(&mut self) {
+    pub fn o_assign_index(&mut self) {
         let target = self.pop_value();
         let index = self.pop_value();
         let val = self.pop_value();
@@ -460,7 +472,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         }
     }
 
-    fn o_array(&mut self, size: usize) {
+    pub fn o_array(&mut self, size: usize) {
         let mut obj = R_Struct::with_size(size);
         for idx in (0..size).rev() {
             let val = self.pop_value();
@@ -469,7 +481,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         self.stack.push(StackVal::Owned(R_BoxedValue::Struct(obj)));
     }
 
-    fn o_repeat(&mut self, size: usize) {
+    pub fn o_repeat(&mut self, size: usize) {
         let val = self.pop_value();
 
         let mut obj = R_Struct::with_size(size);
@@ -480,7 +492,7 @@ impl<'a, 'cx> Interpreter<'a, 'cx> {
         self.stack.push(StackVal::Owned(R_BoxedValue::Struct(obj)));
     }
 
-    fn o_len(&mut self) {
+    pub fn o_len(&mut self) {
         let x = self.pop_value();
         if let R_BoxedValue::Struct(s) = x {
             self.stack.push(StackVal::Owned(R_BoxedValue::Usize(s.data.len())));

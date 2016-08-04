@@ -1,11 +1,11 @@
 
 use std::fmt;
-
+use std::rc::Rc;
 
 pub use rustc::mir::repr::{BinOp, BorrowKind, BasicBlock};
 use rustc::hir::def_id::DefId;
 
-use core::objects::{R_BoxedValue, InstructionPointer};
+use core::objects::{R_BoxedValue, InstructionPointer, R_Function};
 
 
 
@@ -30,7 +30,13 @@ pub enum OpCode{
     // TODO: remove
     LoadFunc(DefId),
 
+    RunTrace(usize),
+
     Call,
+
+    // a call in traced execution
+    // save the return address
+    FlatCall(DefId, InstructionPointer, Rc<R_Function>),
     Return,
 
     Resume, //resume stack unwinding
@@ -107,7 +113,7 @@ pub struct Guard {
     pub expected: bool,
     // pub recovery: Rc<Function>,
     // pub pc: usize,
-    pub recovery: InstructionPointer
+    pub recovery: InstructionPointer,
 }
 
 impl fmt::Debug for Guard {

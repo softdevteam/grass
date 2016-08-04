@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types)]
 
-
+use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -11,11 +11,17 @@ use interp::Interpreter;
 
 
 
-#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq)]
 pub struct R_Function {
     pub args_cnt: usize,
     pub locals_cnt: usize,
     pub opcodes: Vec<OpCode>,
+}
+
+impl fmt::Debug for R_Function {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Function({})", self.args_cnt)
+    }
 }
 
 
