@@ -59,7 +59,7 @@ impl Tracer {
     //
     // #3 Vanilla execution mode
     //     => increase counter for this merge point
-    //        check if counter reached threshhold
+    //        check if counter reached threshold
     //        if so, mark merge point as start of a hot loop and start tracing mode
 
     pub fn handle_mergepoint(&mut self, interp: &mut Interpreter, in_pc: usize) -> Option<InstructionPointer> {
