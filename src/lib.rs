@@ -2,7 +2,8 @@
 
 #![feature(plugin)]
 
-#![plugin(clippy)]
+ 
+//#![plugin(clippy)]
 #![allow(doc_markdown, unneeded_field_pattern)]
 
 #![allow(unused_imports, unused_variables, dead_code)]
