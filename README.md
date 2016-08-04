@@ -2,6 +2,9 @@
 
 # grass
 
+grass is a meta-tracing interpreter project written in rust.
+
+## build instructions
 
 To build one needs to install the `nightly` toolchain:
 
