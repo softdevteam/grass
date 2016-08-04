@@ -1,4 +1,6 @@
 
+pub mod optimisation;
+
 use std::io;
 use std::io::Write;
 use std::rc::Rc;
@@ -9,7 +11,7 @@ use bc::bytecode::{OpCode, Guard, InternalFunc};
 
 use interp::{Interpreter, StackVal};
 
-
+use self::optimisation as opt;
 
 const HOT_LOOP_COUNT: usize = 5;
 
@@ -77,19 +79,23 @@ impl Tracer {
                 active.push(OpCode::RunTrace(in_pc));
                 active.push(OpCode::ConstValue(R_BoxedValue::Bool(!guard.expected)));
             }
-            return Some(guard.recovery);
 
-            // if let t = trace.bind_mut(interp) {
-                // t.exec();
-            // }
+            Some(guard.recovery)
         }
+
         // #2
         else if self.active.is_some() && in_pc == self.loop_start {
             let mut active = self.active.take().unwrap();
-            // active.pop().unwrap();
             self.veryify_trace(&active);
+
+            for opcode in &active {
+                debug!("#TR {:?}", opcode);
+            }
+
             self.traces.insert(in_pc, active);
             assert!(self.active.is_none());
+
+            None
         }
 
         // #3
@@ -105,9 +111,9 @@ impl Tracer {
                 self.counter.clear();
                 self.loop_start = in_pc;
             }
-        }
 
-        None
+            None
+        }
     }
 
     pub fn run_trace(&self, interp: &mut Interpreter, in_pc: usize) -> Guard {
@@ -117,7 +123,6 @@ impl Tracer {
 
     }
 
-    // recovery: InstructionPointer)
     pub fn trace_opcode(&mut self, interp: &mut Interpreter, opcode: &OpCode, ip: InstructionPointer) {
         if self.active.is_none() {
             return;
@@ -143,9 +148,10 @@ impl Tracer {
             },
 
             OpCode::Call => {
-                // we need to remove the function we had called
+                // we need to remove the function we would have called
                 let mut active = self.active.as_mut().unwrap();
                 let val = active.pop().unwrap().clone();
+
                 if let OpCode::ConstValue(R_BoxedValue::Func(target)) = val {
                     let func = interp.program.get_func(target);
                     active.push(OpCode::FlatCall(target, ip, func));
@@ -168,8 +174,6 @@ pub struct TraceRunner<'a> {
     pub trace: &'a Vec<OpCode>,
     pub tracer: &'a Tracer,
 }
-
-// create_bind!(TraceImpl for Trace where interp: Interpreter<'a, 'a>);
 
 impl<'a> TraceRunner<'a> {
 
