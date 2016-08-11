@@ -62,10 +62,15 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
         self.krates.entry(def_id).or_insert_with(|| {
             // println!("load function {:?}", def_id);
             let cs = &context.tcx.sess.cstore;
-            let mir = cs.maybe_get_item_mir(context.tcx, def_id).unwrap_or_else(||{
-                panic!("no mir for {:?}", def_id);
-            });
-            Rc::new(context.mir_to_bytecode(&mir))
+
+            if let Some(ref node_id) = context.tcx.map.as_local_node_id(def_id){
+                Rc::new(context.mir_to_bytecode(context.map.map.get(node_id).unwrap()))
+            } else {
+                let mir = cs.maybe_get_item_mir(context.tcx, def_id).unwrap_or_else(||{
+                    panic!("no mir for {:?}", def_id);
+                });
+                Rc::new(context.mir_to_bytecode(&mir))
+            }
         }).clone()
     }
 }
