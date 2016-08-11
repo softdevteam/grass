@@ -63,14 +63,19 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
             // println!("load function {:?}", def_id);
             let cs = &context.tcx.sess.cstore;
 
-            if let Some(ref node_id) = context.tcx.map.as_local_node_id(def_id){
-                Rc::new(context.mir_to_bytecode(context.map.map.get(node_id).unwrap()))
-            } else {
-                let mir = cs.maybe_get_item_mir(context.tcx, def_id).unwrap_or_else(||{
-                    panic!("no mir for {:?}", def_id);
-                });
-                Rc::new(context.mir_to_bytecode(&mir))
-            }
+            Rc::new(match context.tcx.map.as_local_node_id(def_id) {
+                Some(ref node_id) => {
+                    let mir = context.map.map.get(node_id).unwrap();
+                    context.mir_to_bytecode(mir)
+                },
+                None => {
+                    let mir = cs.maybe_get_item_mir(context.tcx, def_id).unwrap_or_else(||{
+                        panic!("no mir for {:?}", def_id);
+                    });
+                    context.mir_to_bytecode(&mir)
+                },
+            })
+
         }).clone()
     }
 }
