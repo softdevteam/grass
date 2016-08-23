@@ -7,7 +7,6 @@ extern crate rustc_driver;
 extern crate getopts;
 
 use grass::bc::{translate, Context};
-use grass::interp;
 
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls, Compilation};
@@ -30,7 +29,6 @@ impl<'a> CompilerCalls<'a> for GrassCompilerCalls {
             let context = Context{tcx: tcx, map: &map};
 
             let (mut program, main) = translate::generate_bytecode(&context);
-            interp::run(&mut program, main, tcx, map);
         });
 
         control.after_analysis.stop = Compilation::Stop;

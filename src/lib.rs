@@ -24,5 +24,3 @@ mod util;
 
 pub mod bc;
 pub mod core;
-pub mod interp;
-pub mod trace;

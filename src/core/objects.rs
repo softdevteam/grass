@@ -7,7 +7,6 @@ use std::cell::RefCell;
 use rustc::hir::def_id::DefId;
 
 use bc::bytecode::OpCode;
-use interp::Interpreter;
 
 
 
