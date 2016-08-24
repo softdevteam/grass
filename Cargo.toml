@@ -3,9 +3,9 @@ name = "grass"
 version = "0.0.0"
 authors = ["Jasper Schulz <jasper.b.schulz@gmail.com>"]
 
-[[bin]]
-doc = false
-name = "grassc"
+# [[bin]]
+# doc = false
+# name = "grassc"
 
 [dependencies]
 #clippy = "*"

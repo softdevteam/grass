@@ -28,7 +28,7 @@ impl<'a> CompilerCalls<'a> for GrassCompilerCalls {
             let tcx = state.tcx.unwrap();
             let context = Context{tcx: tcx, map: &map};
 
-            let (mut program, main) = translate::generate_bytecode(&context);
+            let mut program = translate::generate_bytecode(&context);
         });
 
         control.after_analysis.stop = Compilation::Stop;

@@ -9,7 +9,7 @@ use rustc_serialize::{json, hex};
  */
 
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
 use bc::bytecode::{OpCode, InternalFunc};
@@ -39,34 +39,32 @@ use rustc::middle::cstore::LinkagePreference;
 // use syntax_pos::DUMMY_SP;
 use rustc_data_structures::indexed_vec::Idx;
 
-// use syntax::ast;
-
-
-pub type KrateTree<'a> = BTreeMap<DefId, Rc<R_Function>>;
-
 pub struct Program<'a, 'tcx: 'a> {
     context: &'a Context<'a, 'tcx>,
+    // cache: BTreeMap<DefId, Vec<OpCode>>,
+    cache: BTreeMap<DefId, R_Function>,
 
-    // function_table: Vec<Function>,
-    pub krates: KrateTree<'a>
 }
 
 impl<'a, 'tcx> Program<'a, 'tcx> {
     fn new(context: &'a Context<'a, 'tcx>) -> Program<'a, 'tcx> {
-        Program {context: context, krates: BTreeMap::new() }
+        Program {context: context, cache: BTreeMap::new() }
     }
 
-    pub fn get_func<'b>(&'b mut self, def_id: DefId) -> Rc<R_Function> {
-        let context = &self.context;
-
-        self.krates.entry(def_id).or_insert_with(|| {
-            // println!("load function {:?}", def_id);
-            let cs = &context.tcx.sess.cstore;
-            let mir = cs.maybe_get_item_mir(context.tcx, def_id).unwrap_or_else(||{
+    pub fn load_fn_from_def_id(&mut self, def_id: DefId) {
+        if !self.cache.contains_key(&def_id) {
+            let cs = &self.context.tcx.sess.cstore;
+            let mir = cs.maybe_get_item_mir(self.context.tcx, def_id).unwrap_or_else(||{
                 panic!("no mir for {:?}", def_id);
             });
-            Rc::new(context.mir_to_bytecode(&mir))
-        }).clone()
+            let mir_analyser = MirAnalyser::analyse(&mir, &self.context.tcx);
+
+            // self.cache.insert(def_id.clone(), mir_analyser.func);
+
+            for func in &mir_analyser.seen_fns {
+                self.load_fn_from_def_id(*func);
+            }
+        }
     }
 }
 
@@ -77,86 +75,16 @@ enum MetaOpCode {
     OpCode(OpCode),
 }
 
+
 pub trait ByteCode {
-    fn to_opcodes(&self, &mut Analyser) {unimplemented!()}
-    fn as_rvalue(&self, &mut Analyser) {unimplemented!()}
-}
-
-pub struct GrassId {
-    krate: usize,
-    func: usize,
-}
-
-pub struct CrateMap {
-    crate_map: BTreeMap<DefId, usize>,
-    func_map: BTreeMap<DefId, usize>,
+    fn to_opcodes(&self, &mut BlockAnalyser) {unimplemented!()}
+    fn as_rvalue(&self, &mut BlockAnalyser) {unimplemented!()}
 }
 
 
 pub struct Context<'a, 'tcx: 'a> {
     pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
     pub map: &'a MirMap<'tcx>,
-}
-
-
-impl<'a, 'tcx> Context<'a, 'tcx> {
-
-    pub fn mir_to_bytecode(&'a self, func: &Mir<'a>) -> R_Function {
-        let blocks = func.basic_blocks().iter().map(
-            |bb| {
-                let mut gen = Analyser::new(self.tcx, func);
-                gen.analyse_block(bb);
-                gen.opcodes
-            }).collect();
-
-        R_Function {
-            args_cnt: func.arg_decls.len(),
-            locals_cnt: func.arg_decls.len() + func.var_decls.len() + func.temp_decls.len(),
-            opcodes: self.flatten_blocks(blocks, func)
-        }
-    }
-
-
-    // replace Gotos with Jumps
-    fn flatten_blocks(&'a self, blocks: Vec<Vec<MetaOpCode>>, func: &Mir<'a>) -> Function {
-        let mut indicies = Vec::new();
-        let mut n = 0usize;
-        for block in &blocks {
-            indicies.push(n);
-            n += block.len();
-        }
-
-
-        let mut opcodes = Vec::new();
-
-        let new_target = |block: &BasicBlock| indicies[block.index()];
-
-        for (current, opcode) in blocks.iter().flat_map(|v| v).enumerate() {
-            let oc = match *opcode {
-
-                MetaOpCode::Goto(ref bb) => {
-                    if new_target(bb) < current {
-                        OpCode::JumpBack(current - new_target(bb))
-                    } else {
-                        OpCode::Skip(new_target(bb) - current)
-                    }
-                },
-
-                MetaOpCode::GotoIf(ref bb) => {
-                    if new_target(bb) < current {
-                        OpCode::JumpBackIf(current - new_target(bb))
-                    } else {
-                        OpCode::SkipIf(new_target(bb) - current)
-                    }
-                },
-
-                MetaOpCode::OpCode(ref oc) => oc.clone(),
-            };
-            opcodes.push(oc);
-        }
-
-    opcodes
-    }
 }
 
 
@@ -190,152 +118,143 @@ impl<'a, 'tcx> Context<'a, 'tcx> {
 /// basic blocks. Thus there are no explicit loops within MIR.
 ///
 
-pub struct Analyser<'a, 'tcx: 'a>{
-    opcodes: Vec<MetaOpCode>,
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    func_mir: &'a Mir<'a>,
+/// Analyse a single function (in form of a mir)
+pub struct MirAnalyser<'a, 'tcx: 'a> {
+    /// typecontext is needed to lookup types (e.g. real size of usize)
+    tcx: &'a TyCtxt<'a, 'tcx, 'tcx>,
+
+    /// the function to analyse
+    mir: &'a Mir<'a>,
+
+    // output
+    blocks: Vec<Vec<MetaOpCode>>,
+
+    seen_fns: HashSet<DefId>,
 }
 
-impl<'a, 'tcx> Analyser<'a, 'tcx> {
 
-    fn new(tcx: TyCtxt<'a, 'tcx, 'tcx>, func_mir: &'a Mir<'a>) -> Self {
-        Analyser{ opcodes: Vec::new(), tcx: tcx, func_mir: func_mir }
+impl<'a, 'tcx> MirAnalyser<'a, 'tcx> {
+    pub fn analyse(mir: &'a Mir, tcx: &'a TyCtxt<'a, 'tcx, 'tcx>) -> MirAnalyser<'a, 'tcx> {
+        let mut analyser = MirAnalyser { mir: mir,
+                      tcx: tcx,
+                      blocks: Vec::new(),
+                      seen_fns: HashSet::new() };
+
+
+        analyser.analyse_blocks();
+        let flat_list = analyser.flatten_blocks();
+
+        analyser
     }
 
+    fn analyse_blocks(&mut self) {
+        for bb in self.mir.basic_blocks().iter() {
+            let block_analyser = BlockAnalyser::analyse(bb, self);
+        }
+    }
+
+    // replace Gotos with Jumps
+    fn flatten_blocks(&self) -> Vec<OpCode> {
+        let mut indicies = Vec::new();
+        let mut n = 0usize;
+        for block in &self.blocks {
+            indicies.push(n);
+            n += block.len();
+        }
+
+
+        let mut opcodes = Vec::new();
+
+        let new_target = |block: &BasicBlock| indicies[block.index()];
+
+        for (current, opcode) in self.blocks.iter().flat_map(|v| v).enumerate() {
+            let oc = match *opcode {
+                MetaOpCode::Goto(ref bb) => {
+                    if new_target(bb) < current {
+                        OpCode::JumpBack(current - new_target(bb))
+                    } else {
+                        OpCode::Skip(new_target(bb) - current)
+                    }
+                },
+
+                MetaOpCode::GotoIf(ref bb) => {
+                    if new_target(bb) < current {
+                        OpCode::JumpBackIf(current - new_target(bb))
+                    } else {
+                        OpCode::SkipIf(new_target(bb) - current)
+                    }
+                },
+
+                MetaOpCode::OpCode(ref oc) => oc.clone(),
+            };
+            opcodes.push(oc);
+        }
+
+        opcodes
+    }
+
+}
+
+trait LocalIndex {
+    fn arg_to_local(&self, n: usize) -> usize;
+    fn var_to_local(&self, n: usize) -> usize;
+    fn tmp_to_local(&self, n: usize) -> usize;
+}
+
+impl<'a> LocalIndex for Mir<'a> {
     fn arg_to_local(&self, n: usize) -> usize {
         n
     }
 
     fn var_to_local(&self, n: usize) -> usize {
-        self.func_mir.arg_decls.len() + n
+        self.arg_decls.len() + n
     }
 
     fn tmp_to_local(&self, n: usize) -> usize {
-        self.var_to_local(n) + self.func_mir.var_decls.len()
+        self.var_to_local(n) + self.var_decls.len()
     }
+}
 
-    // fn struct_implements_copy(&self, ty: Ty) -> bool {
-        // let param_env = &self.tcx.empty_parameter_environment();
-        // !ty.moves_by_default(tcx, param_env, DUMMY_SP);
-    // }
+pub struct BlockAnalyser<'b, 'a:'b, 'tcx: 'a> {
+    block: &'a BasicBlockData<'a>,
+    env: &'b mut MirAnalyser<'a, 'tcx>,
+    opcodes: Vec<MetaOpCode>,
+}
+
+impl<'b, 'a, 'tcx> BlockAnalyser<'b, 'a, 'tcx> {
+    pub fn analyse(block: &'a BasicBlockData<'a>, env: &'b mut MirAnalyser<'a, 'tcx>) -> Self {
+        let mut analyser = BlockAnalyser { block: block,
+                        env: env,
+                        opcodes: Vec::new() };
+
+        for statement in &block.statements {
+            statement.to_opcodes(&mut analyser);
+        }
+        block.terminator().to_opcodes(&mut analyser);
+
+        analyser
+    }
 
     fn add(&mut self, opcode: OpCode) {
         self.opcodes.push(MetaOpCode::OpCode(opcode));
     }
-
-    fn analyse_block(&mut self, block: &BasicBlockData<'a>) {
-        for statement in &block.statements {
-            statement.to_opcodes(self);
-        }
-        block.terminator().to_opcodes(self);
-    }
-
-    fn unpack_const(&mut self, literal: &Literal, ty: &TyS) {
-        let oc = OpCode::ConstValue(match *literal {
-            Literal::Value{ ref value } => {
-
-                use rustc_const_math::ConstInt::*;
-                use rustc_const_math::ConstFloat::*;
-                use rustc_const_math::{Us16, Us32, Us64};
-
-                use rustc::middle::const_val::ConstVal::{
-                    Integral, Float, Bool, Function, Array,
-                    Str, ByteStr, Tuple, Struct, Repeat, Char, Dummy
-                };
-
-                match *value {
-                    Integral( U8(u)) => R_BoxedValue::U64(u as u64),
-                    Integral(U16(u)) => R_BoxedValue::U64(u as u64),
-                    Integral(U32(u)) => R_BoxedValue::U64(u as u64),
-                    Integral(U64(u)) => R_BoxedValue::U64(u),
-
-                    Integral( I8(i)) => R_BoxedValue::I64(i as i64),
-                    Integral(I16(i)) => R_BoxedValue::I64(i as i64),
-                    Integral(I32(i)) => R_BoxedValue::I64(i as i64),
-                    Integral(I64(i)) => R_BoxedValue::I64(i),
-
-                    Integral(Usize(Us16(us16))) => R_BoxedValue::Usize(us16 as usize),
-                    Integral(Usize(Us32(us32))) => R_BoxedValue::Usize(us32 as usize),
-                    Integral(Usize(Us64(us64))) => R_BoxedValue::Usize(us64 as usize),
-
-                    Integral(Isize(_i)) => unimplemented!(),
-
-                    Float(F32(f)) => R_BoxedValue::F64(f as f64),
-                    Float(F64(f)) => R_BoxedValue::F64(f),
-
-                    // should this ever happen?
-                    Float(FInfer{f32: _, f64: _}) => unimplemented!(),
-                    Integral(Infer(_u)) => unimplemented!(),
-                    Integral(InferSigned(_i)) => unimplemented!(),
-
-                    Bool(b) => R_BoxedValue::Bool(b),
-
-                    Str(ref interned_str) => {
-                        unimplemented!();
-                    },
-
-                    ByteStr(_)
-                    | Tuple(_)
-                    | Struct(_)
-                    | Function(_)
-                    | Array(_, _)
-                    | Repeat(_, _)
-                    | Char(_) => unimplemented!(),
-
-                    Dummy => panic!("Dummy"),
-                }
-            },
-
-            // let x = &42; will generate a reference to a static variable
-            Literal::Item{ def_id, .. } => {
-                // println!("TTT {:?} - {:?}", ty.sty, def_id);
-                match ty.sty {
-                    TypeVariants::TyFnDef(..) => {
-                        R_BoxedValue::Func(def_id)
-                    },
-                    _ => R_BoxedValue::Static(def_id),
-                }
-                    // TypeVariants::TyInt(int_ty) => 
-                    // _ => R_BoxedValue::Static(def_id),
-                    // TypeVariants::
-                // }
-                    // R_BoxedValue::Static(def_id)
-                // }
-            },
-
-            //                 let cid = ConstantId {
-            //                     def_id: def_id,
-            //                     substs: substs,
-            //                     kind: ConstantKind::Global,
-            //                 };
-            //                 Ok(*self.statics.get(&cid).expect("static should have been cached (rvalue)"))
-            //             }
-            //         },
-
-            // TODO: what is this doing?
-            // &SOME_CONST => promoted0
-            Literal::Promoted {index} => {
-                R_BoxedValue::Usize(index.index())
-            },
-        });
-
-        self.add(oc);
-    }
 }
 
-
 impl<'a> ByteCode for Statement<'a> {
-    fn to_opcodes(&self, env: &mut Analyser) -> () {
-        let StatementKind::Assign(ref lvalue, ref rvalue) = self.kind;
-        rvalue.to_opcodes(env);
-        lvalue.to_opcodes(env);
+    fn to_opcodes(&self, env: &mut BlockAnalyser) -> () {
+        if let StatementKind::Assign(ref lvalue, ref rvalue) = self.kind {
+            rvalue.to_opcodes(env);
+            lvalue.to_opcodes(env);
+        } else {
+            unimplemented!();
+        }
     }
 }
 
 
 impl<'a> ByteCode for Terminator<'a> {
 
-    fn to_opcodes(&self, env: &mut Analyser) {
+    fn to_opcodes(&self, env: &mut BlockAnalyser) {
         let op = match self.kind {
 
             // Gotos are resolved to JUMPs in a second step later
@@ -409,17 +328,17 @@ impl<'a> ByteCode for Terminator<'a> {
 
 impl<'a> ByteCode for Lvalue<'a> {
     /// lvalue = <rvalue>
-    fn to_opcodes(&self, env: &mut Analyser) {
+    fn to_opcodes(&self, env: &mut BlockAnalyser) {
         match *self {
             //a = <rvalue>
             Lvalue::Var(n)  => {
-                let n = env.var_to_local(n.index());
+                let n = env.env.mir.var_to_local(n.index());
                 env.add(OpCode::Store(n));
             },
 
             //tmp_x = <rvalue>
             Lvalue::Temp(n) => {
-                let n = env.tmp_to_local(n.index());
+                let n = env.env.mir.tmp_to_local(n.index());
                 env.add(OpCode::Store(n));
             },
 
@@ -468,18 +387,18 @@ impl<'a> ByteCode for Lvalue<'a> {
     }
 
     // load lvalue as rvalue
-    fn as_rvalue(&self, env: &mut Analyser) {
+    fn as_rvalue(&self, env: &mut BlockAnalyser) {
         let opcode = match *self {
             Lvalue::Var(n) => {
-                let n = env.var_to_local(n.index());
+                let n = env.env.mir.var_to_local(n.index());
                 OpCode::Load(n)
             },
             Lvalue::Temp(n) => {
-                let n = env.tmp_to_local(n.index());
+                let n = env.env.mir.tmp_to_local(n.index());
                 OpCode::Load(n)
             },
             Lvalue::Arg(n) => {
-                let n = env.arg_to_local(n.index());
+                let n = env.env.mir.arg_to_local(n.index());
                 OpCode::Load(n)
             },
 
@@ -522,7 +441,7 @@ impl<'a> ByteCode for Lvalue<'a> {
 
 impl<'a> ByteCode for Rvalue<'a> {
 
-    fn to_opcodes(&self, env: &mut Analyser) {
+    fn to_opcodes(&self, env: &mut BlockAnalyser) {
         match *self {
             Rvalue::Use(ref op) => {
                 op.as_rvalue(env);
@@ -588,7 +507,7 @@ impl<'a> ByteCode for Rvalue<'a> {
 
             // example: [0; 5] -> [0, 0, 0, 0, 0]
             Rvalue::Repeat(ref op, ref times) => {
-                let size = times.value.as_u64(env.tcx.sess.target.uint_type);
+                let size = times.value.as_u64(env.env.tcx.sess.target.uint_type);
                 op.as_rvalue(env);
                 env.add(OpCode::Repeat(size as usize));
             },
@@ -625,17 +544,89 @@ impl<'a> ByteCode for Rvalue<'a> {
     }
 }
 
+fn unpack_const(literal: &Literal, ty: &TyS) -> OpCode {
+    OpCode::ConstValue(match *literal {
+        Literal::Value{ ref value } => {
+
+            use rustc_const_math::ConstInt::*;
+            use rustc_const_math::ConstFloat::*;
+            use rustc_const_math::{Us16, Us32, Us64};
+
+            use rustc::middle::const_val::ConstVal::{
+                Integral, Float, Bool, Function, Array,
+                Str, ByteStr, Tuple, Struct, Repeat, Char, Dummy
+            };
+
+            match *value {
+                Integral( U8(u)) => R_BoxedValue::U64(u as u64),
+                Integral(U16(u)) => R_BoxedValue::U64(u as u64),
+                Integral(U32(u)) => R_BoxedValue::U64(u as u64),
+                Integral(U64(u)) => R_BoxedValue::U64(u),
+
+                Integral( I8(i)) => R_BoxedValue::I64(i as i64),
+                Integral(I16(i)) => R_BoxedValue::I64(i as i64),
+                Integral(I32(i)) => R_BoxedValue::I64(i as i64),
+                Integral(I64(i)) => R_BoxedValue::I64(i),
+
+                Integral(Usize(Us16(us16))) => R_BoxedValue::Usize(us16 as usize),
+                Integral(Usize(Us32(us32))) => R_BoxedValue::Usize(us32 as usize),
+                Integral(Usize(Us64(us64))) => R_BoxedValue::Usize(us64 as usize),
+
+                Integral(Isize(_i)) => unimplemented!(),
+
+                Float(F32(f)) => R_BoxedValue::F64(f as f64),
+                Float(F64(f)) => R_BoxedValue::F64(f),
+
+                // should this ever happen?
+                Float(FInfer{f32: _, f64: _}) => unimplemented!(),
+                Integral(Infer(_u)) => unimplemented!(),
+                Integral(InferSigned(_i)) => unimplemented!(),
+
+                Bool(b) => R_BoxedValue::Bool(b),
+
+                Str(ref interned_str) => {
+                    unimplemented!();
+                },
+
+                ByteStr(_)
+                | Tuple(_)
+                | Struct(_)
+                | Function(_)
+                | Array(_, _)
+                | Repeat(_, _)
+                | Char(_) => unimplemented!(),
+
+                Dummy => panic!("Dummy"),
+            }
+        },
+
+        // let x = &42; will generate a reference to a static variable
+        Literal::Item{ def_id, .. } => {
+            // println!("TTT {:?} - {:?}", ty.sty, def_id);
+            match ty.sty {
+                TypeVariants::TyFnDef(..) => {
+                    R_BoxedValue::Func(def_id)
+                },
+                _ => R_BoxedValue::Static(def_id),
+            }
+        },
+
+        Literal::Promoted {index} => {
+            R_BoxedValue::Usize(index.index())
+        },
+    })
+}
 
 impl<'a> ByteCode for Operand<'a> {
 
-    fn as_rvalue(&self, env: &mut Analyser) {
+    fn as_rvalue(&self, env: &mut BlockAnalyser) {
         match *self {
             Operand::Consume(ref lvalue) => {
                 lvalue.as_rvalue(env);
             },
 
             Operand::Constant(ref constant) => {
-                env.unpack_const(&constant.literal, constant.ty);
+                env.add(unpack_const(&constant.literal, constant.ty));
                 // constant.literal is either Item, Value or Promoted
                 // assumption: `Item`s are functions.
             }
@@ -644,113 +635,15 @@ impl<'a> ByteCode for Operand<'a> {
 }
 
 
-pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> (Program<'a, 'tcx>, DefId) {
+pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> Program<'a, 'tcx> {
 
-    let cs = &context.tcx.sess.cstore;
-    let crates = cs.used_crates(LinkagePreference::RequireStatic);
-    // for krate in &crates {
-        // println!("{:?}", krate);
-    // }
-    // println!("{:?}", crates.len());
-
-
-    //map krate num -> node id
     let mut program = Program::new(context);
-    // let mut build_ins: BTreeMap<u32, BTreeMap<u32, &'a InternedString>> = BTreeMap::new();
     let mut main: Option<DefId> = None;
 
-    for (key, func_mir) in &context.map.map {
-        // let mir = map.map.get(key).unwrap();
-        // println!("{:?}", mir.id);
-        let def_id = context.tcx.map.local_def_id(*key);
-        // let func_index = defid_to_index.get_index(def_id);
-
-        if let Node::NodeItem(item) = context.tcx.map.get(key.to_owned()) {
-            // println!("Function: {:?} {:?}", item.name.as_str(), def_id.index.as_u32());
-                // let mut collector = FuncGen::new(&context.tcx, context.map);
-                // collector.analyse(&func_mir);
-                // for (i, block) in collector.blocks.iter().enumerate() {
-                //     // println!("{} {:?}", i, block);
-                // }
-                // let blocks = optimize_blocks(&collector.blocks, func_mir);
-
-                // check for special functions
-                let mut func = if item.name.as_str().starts_with("__") {
-                    let name = item.name.as_str()[2..].to_string();
-                    let command = OpCode::InternalFunc(match name.as_ref() {
-                        "out" => InternalFunc::Out,
-                        "print" => InternalFunc::Print,
-                        "met_merge_point" => InternalFunc::MergePoint,
-                        "assert" => InternalFunc::Assert,
-                        _ => panic!("Unkown Function {:?}", name),
-                    });
-
-                    R_Function {
-                        args_cnt: 1,
-                        locals_cnt: 1,
-                        opcodes: vec![OpCode::Load(0), command, OpCode::Tuple(0), OpCode::Return]
-                    }
-
-                } else {
-                    // if let Ok(encoded) = json::encode(&func_mir) {
-                    // if let Ok(encoded) = json::encode(&XYZ{data: 123, abc: ABC{inner: true}}) {
-                        // println!("{}", encoded);
-                    // }
-                    context.mir_to_bytecode(func_mir)
-                };
-
-                // trace::detect_load_after_store(&mut opcodes);
-
-                // opcodes = trace::detect_unused_variables(&opcodes);
-                // opcodes = trace::remove_unused_consts(&opcodes);
-
-                // opcodes = trace::remove_none(&opcodes);
-
-
-                debug!("#BC {:?}", def_id);
-                for opcode in &func.opcodes {
-                    debug!("#BC {:?}", opcode);
-                }
-                debug!("#ME Promoted: {:?}", func_mir.promoted);
-
-                program.krates.insert(def_id, Rc::new(func));
-
-
-                if def_id.krate == 0 && item.name.as_str() == "main" {
-                    main = Some(def_id);
-                }
-        }
-    }
-
-    {
-        // let keys: Vec<&DefId> = program.krates.keys().collect();
-        // let values: Vec<&Rc<R_Function>> = program.krates.values().collect();
-        // match json::encode(&keys) {
-        //     Ok(encoded) => println!("{}", encoded),
-        //     Err(err) => println!("{:?}", err),
-        // };
-        // match json::encode(&values) {
-        //     Ok(encoded) => println!("{}", encoded),
-        //     Err(err) => println!("{:?}", err),
-        // };
-
-        // match json::encode(&program.krates) {
-        //     Ok(encoded) => println!("{}", encoded),
-        //     Err(err) => println!("{:?}", err),
-        // };
-    }
-
-    // println!("{:?}", program.krates);
-
-
-    // for krate in crates {
-    //     let items = cs.lang_items(krate);
-    //     for item in items {
-    //         let def_id = DefId { krate: krate, index: item.0 };
-    //         program.get_func(def_id);
-    //     }
+    // for (key, func_mir) in &context.map.map {
+    //     let def_id = context.tcx.map.local_def_id(*key);
+    //     program.load_fn_from_def_id(def_id);
     // }
 
-
-    (program, main.unwrap())
+    program
 }
