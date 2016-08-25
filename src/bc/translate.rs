@@ -51,15 +51,32 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
         Program {context: context, cache: BTreeMap::new() }
     }
 
+
     pub fn load_fn_from_def_id(&mut self, def_id: DefId) {
         if !self.cache.contains_key(&def_id) {
-            let cs = &self.context.tcx.sess.cstore;
-            let mir = cs.maybe_get_item_mir(self.context.tcx, def_id).unwrap_or_else(||{
-                panic!("no mir for {:?}", def_id);
-            });
-            let mir_analyser = MirAnalyser::analyse(&mir, &self.context.tcx);
+            let mir = match self.context.map.map.get(&def_id) {
+                Some(mir) => mir,
+                None => panic!("could not load function {:?}", def_id),
+            };
 
-            // self.cache.insert(def_id.clone(), mir_analyser.func);
+            // let cs = &self.context.tcx.sess.cstore;
+            // println!("71 {:?}", self.context.tcx.map.as_local_node_id(def_id));
+            // let mir = match self.context.tcx.map.as_local_node_id(def_id) {
+                // Some(node_id) => {
+                    // let mir = self.context.map.map.get(node_id).unwrap();
+                    // mir
+                // },
+                // None => {
+            //         let mir = cs.maybe_get_item_mir(self.context.tcx, def_id).unwrap_or_else(||{
+            //             panic!("no mir for {:?}", def_id);
+            //         });
+            //         *mir
+                // },
+            // };
+
+            let mir_analyser = MirAnalyser::analyse(mir, &self.context.tcx);
+
+            self.cache.insert(def_id.clone(), R_Function::default());
 
             for func in &mir_analyser.seen_fns {
                 self.load_fn_from_def_id(*func);
@@ -242,11 +259,17 @@ impl<'b, 'a, 'tcx> BlockAnalyser<'b, 'a, 'tcx> {
 
 impl<'a> ByteCode for Statement<'a> {
     fn to_opcodes(&self, env: &mut BlockAnalyser) -> () {
-        if let StatementKind::Assign(ref lvalue, ref rvalue) = self.kind {
-            rvalue.to_opcodes(env);
-            lvalue.to_opcodes(env);
-        } else {
-            unimplemented!();
+        match self.kind {
+            StatementKind::Assign(ref lvalue, ref rvalue) => {
+                rvalue.to_opcodes(env);
+                lvalue.to_opcodes(env);
+            },
+            StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {},
+
+            StatementKind::SetDiscriminant{..} => {
+                println!("{:?}", self.kind);
+                unimplemented!();
+            }
         }
     }
 }
@@ -402,7 +425,9 @@ impl<'a> ByteCode for Lvalue<'a> {
                 OpCode::Load(n)
             },
 
-            Lvalue::Static(def_id) => OpCode::Static(def_id),
+            Lvalue::Static(def_id) => {
+                OpCode::Static(def_id)
+            },
             Lvalue::Projection(ref proj) => {
                 match proj.elem {
                     //*lvalue
@@ -544,7 +569,7 @@ impl<'a> ByteCode for Rvalue<'a> {
     }
 }
 
-fn unpack_const(literal: &Literal, ty: &TyS) -> OpCode {
+fn unpack_const(literal: &Literal, ty: &TyS, env: &mut BlockAnalyser) -> OpCode {
     OpCode::ConstValue(match *literal {
         Literal::Value{ ref value } => {
 
@@ -605,6 +630,9 @@ fn unpack_const(literal: &Literal, ty: &TyS) -> OpCode {
             // println!("TTT {:?} - {:?}", ty.sty, def_id);
             match ty.sty {
                 TypeVariants::TyFnDef(..) => {
+                    // XXX: sort of hacky
+                    env.env.seen_fns.insert(def_id);
+
                     R_BoxedValue::Func(def_id)
                 },
                 _ => R_BoxedValue::Static(def_id),
@@ -626,7 +654,8 @@ impl<'a> ByteCode for Operand<'a> {
             },
 
             Operand::Constant(ref constant) => {
-                env.add(unpack_const(&constant.literal, constant.ty));
+                let const_val = unpack_const(&constant.literal, constant.ty, env);
+                env.add(const_val);
                 // constant.literal is either Item, Value or Promoted
                 // assumption: `Item`s are functions.
             }
@@ -635,15 +664,9 @@ impl<'a> ByteCode for Operand<'a> {
 }
 
 
-pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>) -> Program<'a, 'tcx> {
+pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>, main: DefId) -> Program<'a, 'tcx> {
 
     let mut program = Program::new(context);
-    let mut main: Option<DefId> = None;
-
-    // for (key, func_mir) in &context.map.map {
-    //     let def_id = context.tcx.map.local_def_id(*key);
-    //     program.load_fn_from_def_id(def_id);
-    // }
-
+    program.load_fn_from_def_id(main);
     program
 }

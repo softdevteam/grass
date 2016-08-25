@@ -10,7 +10,7 @@ use bc::bytecode::OpCode;
 
 
 
-#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq)]
+#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Default)]
 pub struct R_Function {
     pub args_cnt: usize,
     pub locals_cnt: usize,
