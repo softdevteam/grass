@@ -4,7 +4,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-use rustc::hir::def_id::DefId;
+// use rustc::hir::def_id::DefId;
 
 use bc::bytecode::OpCode;
 
@@ -80,8 +80,8 @@ pub enum R_BoxedValue {
     Usize(usize),
     Bool(bool),
     Struct(R_Struct),
-    Func(DefId),
-    Static(DefId),
+    Func(usize),
+    Static(usize),
     // Array(R_Array),
 }
 

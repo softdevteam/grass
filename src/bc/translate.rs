@@ -39,21 +39,37 @@ use rustc::middle::cstore::LinkagePreference;
 // use syntax_pos::DUMMY_SP;
 use rustc_data_structures::indexed_vec::Idx;
 
+#[derive(Default)]
+pub struct IdMap {
+    map: BTreeMap<DefId, usize>,
+}
+
+impl IdMap {
+    fn get_index(&mut self, key: &DefId) -> usize {
+        let length = self.map.len();
+        self.map.entry(*key).or_insert(length).clone()
+    }
+}
+
 pub struct Program<'a, 'tcx: 'a> {
     context: &'a Context<'a, 'tcx>,
     // cache: BTreeMap<DefId, Vec<OpCode>>,
-    cache: BTreeMap<DefId, R_Function>,
+    cache: BTreeMap<usize, R_Function>,
+
+    defid_map: IdMap,
 
 }
 
 impl<'a, 'tcx> Program<'a, 'tcx> {
     fn new(context: &'a Context<'a, 'tcx>) -> Program<'a, 'tcx> {
-        Program {context: context, cache: BTreeMap::new() }
+        Program {context: context, cache: BTreeMap::new(), defid_map: IdMap::default() }
     }
 
 
     pub fn load_fn_from_def_id(&mut self, def_id: DefId) {
-        if !self.cache.contains_key(&def_id) {
+        let local_id = self.defid_map.get_index(&def_id);
+
+        if !self.cache.contains_key(&local_id) {
             let mir = match self.context.map.map.get(&def_id) {
                 Some(mir) => mir,
                 None => panic!("could not load function {:?}", def_id),
@@ -74,10 +90,11 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
                 // },
             // };
 
-            let mir_analyser = MirAnalyser::analyse(mir, &self.context.tcx);
+            let mir_analyser = MirAnalyser::analyse(mir, &self.context.tcx, &mut self.defid_map);
+            let mut func = R_Function::default();
+            func.opcodes = mir_analyser.opcodes;
 
-            self.cache.insert(def_id.clone(), R_Function::default());
-
+            self.cache.insert(local_id, func);
             for func in &mir_analyser.seen_fns {
                 self.load_fn_from_def_id(*func);
             }
@@ -86,6 +103,7 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
 }
 
 /// enum to avoid polluting `OpCodes` with later unused variants
+#[derive(Debug)]
 enum MetaOpCode {
     Goto(BasicBlock),
     GotoIf(BasicBlock),
@@ -143,30 +161,36 @@ pub struct MirAnalyser<'a, 'tcx: 'a> {
     /// the function to analyse
     mir: &'a Mir<'a>,
 
-    // output
     blocks: Vec<Vec<MetaOpCode>>,
+
+    opcodes: Vec<OpCode>,
 
     seen_fns: HashSet<DefId>,
 }
 
 
 impl<'a, 'tcx> MirAnalyser<'a, 'tcx> {
-    pub fn analyse(mir: &'a Mir, tcx: &'a TyCtxt<'a, 'tcx, 'tcx>) -> MirAnalyser<'a, 'tcx> {
+    pub fn analyse<'b>(mir: &'a Mir, tcx: &'a TyCtxt<'a, 'tcx, 'tcx>, defid_map: &'b mut IdMap)
+    -> MirAnalyser<'a, 'tcx> {
         let mut analyser = MirAnalyser { mir: mir,
                       tcx: tcx,
                       blocks: Vec::new(),
+                      opcodes: Vec::new(),
                       seen_fns: HashSet::new() };
 
 
-        analyser.analyse_blocks();
-        let flat_list = analyser.flatten_blocks();
+        analyser.analyse_blocks(defid_map);
+        analyser.opcodes = analyser.flatten_blocks();
 
         analyser
     }
 
-    fn analyse_blocks(&mut self) {
+    fn analyse_blocks(&mut self, defid_map: &mut IdMap) {
         for bb in self.mir.basic_blocks().iter() {
-            let block_analyser = BlockAnalyser::analyse(bb, self);
+            let block = {
+                BlockAnalyser::analyse(bb, self, defid_map).opcodes
+            };
+            self.blocks.push(block);
         }
     }
 
@@ -236,13 +260,18 @@ pub struct BlockAnalyser<'b, 'a:'b, 'tcx: 'a> {
     block: &'a BasicBlockData<'a>,
     env: &'b mut MirAnalyser<'a, 'tcx>,
     opcodes: Vec<MetaOpCode>,
+    defid_map: &'b mut IdMap,
 }
 
 impl<'b, 'a, 'tcx> BlockAnalyser<'b, 'a, 'tcx> {
-    pub fn analyse(block: &'a BasicBlockData<'a>, env: &'b mut MirAnalyser<'a, 'tcx>) -> Self {
+    pub fn analyse(block: &'a BasicBlockData<'a>,
+                   env: &'b mut MirAnalyser<'a, 'tcx>,
+                   defid_map: &'b mut IdMap
+        ) -> Self {
         let mut analyser = BlockAnalyser { block: block,
                         env: env,
-                        opcodes: Vec::new() };
+                        opcodes: Vec::new(),
+                        defid_map: defid_map };
 
         for statement in &block.statements {
             statement.to_opcodes(&mut analyser);
@@ -367,7 +396,8 @@ impl<'a> ByteCode for Lvalue<'a> {
 
             Lvalue::Arg(_n)  => unreachable!(),
             Lvalue::Static(def_id)  => {
-                env.add(OpCode::StoreStatic(def_id));
+                let local = env.defid_map.get_index(&def_id);
+                env.add(OpCode::StoreStatic(local));
             },
 
             Lvalue::Projection(ref proj) => {
@@ -426,7 +456,8 @@ impl<'a> ByteCode for Lvalue<'a> {
             },
 
             Lvalue::Static(def_id) => {
-                OpCode::Static(def_id)
+                let local = env.defid_map.get_index(&def_id);
+                OpCode::Static(local)
             },
             Lvalue::Projection(ref proj) => {
                 match proj.elem {
@@ -632,10 +663,15 @@ fn unpack_const(literal: &Literal, ty: &TyS, env: &mut BlockAnalyser) -> OpCode 
                 TypeVariants::TyFnDef(..) => {
                     // XXX: sort of hacky
                     env.env.seen_fns.insert(def_id);
-
-                    R_BoxedValue::Func(def_id)
+                    let local = env.defid_map.get_index(&def_id);
+                    R_BoxedValue::Func(local)
                 },
-                _ => R_BoxedValue::Static(def_id),
+                _ => {
+                    env.env.seen_fns.insert(def_id);
+
+                    let local = env.defid_map.get_index(&def_id);
+                    R_BoxedValue::Static(local)
+                },
             }
         },
 
@@ -668,5 +704,26 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>, main: DefId) 
 
     let mut program = Program::new(context);
     program.load_fn_from_def_id(main);
+    // println!("];");
+
+    println!("let program = [");
+    for idx in 0..program.cache.len() {
+        let func = program.cache.get(&idx).unwrap();
+        let output: Vec<String> = func.opcodes.iter().map(|oc|oc.to_rs()).collect();
+        println!("    [{}],", output.join(", "));
+    }
+    println!("];");
+            // let output: Vec<String> = mir_analyser.opcodes.iter().map(|oc|oc.to_rs()).collect();
+            // println!("  &[{}]", output.join(", "));
+
+
+    // {
+    //     use core::objects::R_BoxedValue::*;
+    //         let program = [
+    //             vec![OpCode::ConstValue(Func(1)), OpCode::Use, OpCode::Store(0), OpCode::Load(0), OpCode::Use, OpCode::Store(2), OpCode::Load(2), OpCode::Call, OpCode::Store(1), OpCode::Skip(1), OpCode::Tuple(0), OpCode::Return],
+    //             vec![OpCode::Tuple(0), OpCode::Skip(1), OpCode::Return],
+    //         ];
+    // }
+
     program
 }

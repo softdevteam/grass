@@ -3,7 +3,7 @@ use std::fmt;
 use std::rc::Rc;
 
 pub use rustc::mir::repr::{BinOp, BorrowKind, BasicBlock};
-use rustc::hir::def_id::DefId;
+// use rustc::hir::def_id::DefId;
 
 use core::objects::{R_BoxedValue, InstructionPointer, R_Function};
 
@@ -20,15 +20,13 @@ pub enum OpCode{
 
     Use,
 
-    StoreStatic(DefId),
+    StoreStatic(usize),
 
     // Const(Constant<'tcx>),
-    Static(DefId),
+    Static(usize),
     // Functions should be loaded normally
     // let x = main;
     // x()
-    // TODO: remove
-    LoadFunc(DefId),
 
     RunTrace(usize),
 
@@ -36,7 +34,7 @@ pub enum OpCode{
 
     // a call in traced execution
     // save the return address
-    FlatCall(DefId, InstructionPointer, Rc<R_Function>),
+    FlatCall(usize, InstructionPointer, Rc<R_Function>),
     Return,
 
     Resume, //resume stack unwinding
@@ -97,6 +95,10 @@ pub enum OpCode{
 impl OpCode {
     pub fn todo_s(s: &str) -> Self {
         OpCode::Todo(String::from(s))
+    }
+
+    pub fn to_rs(&self) -> String {
+        format!("OpCode::{:?}", self)
     }
 }
 
