@@ -10,7 +10,7 @@ use bc::bytecode::OpCode;
 
 
 
-#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub struct R_Function {
     pub args_cnt: usize,
     pub locals_cnt: usize,
@@ -28,7 +28,7 @@ impl fmt::Debug for R_Function {
 // Since we don't have a flat memory model, pointers can point to different
 // locations. E.g. a pointer to the stack is different from one to the heap.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct R_Pointer {
     pub cell: Rc<RefCell<R_BoxedValue>>,
 }
@@ -70,7 +70,7 @@ pub struct R_Pointer {
 // Only these values can life on the stack. XXX: is this true?
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum R_BoxedValue {
     Null,
     Ptr(R_Pointer),
@@ -94,7 +94,7 @@ fn null_values(n: usize) -> Vec<Rc<RefCell<R_BoxedValue>>> {
 // For not we allocate the meta information on the stack with a pointer to the
 // host-level heap.
 #[allow(non_camel_case_types)]
-#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct R_Struct {
     pub alive: bool,
     pub behaviour: MoveSemantics,
@@ -131,7 +131,7 @@ impl R_Struct {
 ///     let a = X(1);
 ///     let b = a
 
-#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MoveSemantics {
     /// **Copy semantics**
     ///
@@ -176,7 +176,7 @@ pub enum MoveSemantics {
 
 
 
-#[derive(Debug, Clone, RustcEncodable, RustcDecodable, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct InstructionPointer {
     pub func: Rc<R_Function>,
     pub pc: usize,

@@ -12,7 +12,7 @@ use rustc_serialize::{json, hex};
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 
-use bc::bytecode::{OpCode, InternalFunc};
+use bc::bytecode::{self, OpCode, InternalFunc};
 use core::objects::{R_BoxedValue, R_Function};
 
 // XXX
@@ -31,7 +31,7 @@ use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal;
 
 use rustc::hir::map::Node;
-use rustc::hir::def_id::DefId;
+use rustc::hir::def_id::{DefId, DefIndex};
 
 use rustc::ty::{TyCtxt, AdtKind, VariantKind, TyS, TypeVariants};
 use rustc::middle::cstore::LinkagePreference;
@@ -39,13 +39,39 @@ use rustc::middle::cstore::LinkagePreference;
 // use syntax_pos::DUMMY_SP;
 use rustc_data_structures::indexed_vec::Idx;
 
-#[derive(Default)]
+use rustc::middle::cstore::CrateStore;
+
 pub struct IdMap {
     map: BTreeMap<DefId, usize>,
+    cstore: Rc<for<'a> CrateStore<'a>>,
 }
 
 impl IdMap {
+    fn new(cstore: Rc<for<'a> CrateStore<'a>>) -> Self {
+        let mut map = BTreeMap::new();
+        // 0 is reserved for merge_point
+        map.insert(DefId::local(DefIndex::new(0)), 0);
+        IdMap { map: map, cstore: cstore }
+    }
+
+    fn is_merge_point(&self, def_id: &DefId) -> bool {
+        if def_id.krate == 0 {
+            return false;
+        }
+        // println!("{:?}", def_id);
+        let krate = self.cstore.crate_name(def_id.krate);
+        let name = self.cstore.item_name(*def_id);
+
+        "merge_point" == &self.cstore.item_name(*def_id).as_str()
+    }
+
     fn get_index(&mut self, key: &DefId) -> usize {
+        // 0 is reserved for merge_point
+        if self.is_merge_point(key) {
+            self.map.insert(*key, 0);
+            return 0;
+        }
+
         let length = self.map.len();
         self.map.entry(*key).or_insert(length).clone()
     }
@@ -62,7 +88,8 @@ pub struct Program<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx> Program<'a, 'tcx> {
     fn new(context: &'a Context<'a, 'tcx>) -> Program<'a, 'tcx> {
-        Program {context: context, cache: BTreeMap::new(), defid_map: IdMap::default() }
+        Program {context: context, cache: BTreeMap::new(),
+            defid_map: IdMap::new(context.tcx.sess.cstore.clone()) }
     }
 
 
@@ -72,7 +99,15 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
         if !self.cache.contains_key(&local_id) {
             let mir = match self.context.map.map.get(&def_id) {
                 Some(mir) => mir,
-                None => panic!("could not load function {:?}", def_id),
+                None => {
+                    // panic!("could not load function {:?}", def_id),
+                    // let cs = &self.context.tcx.sess.cstore;
+                    // let mir = cs.maybe_get_item_mir(self.context.tcx, def_id).unwrap_or_else(||{
+                        // panic!("no mir for {:?}", def_id);
+                    // });
+                    // unimplemented!();
+                    return;
+                }
             };
 
             // let cs = &self.context.tcx.sess.cstore;
@@ -96,7 +131,9 @@ impl<'a, 'tcx> Program<'a, 'tcx> {
 
             self.cache.insert(local_id, func);
             for func in &mir_analyser.seen_fns {
-                self.load_fn_from_def_id(*func);
+                if !self.defid_map.is_merge_point(&def_id) {
+                    self.load_fn_from_def_id(*func);
+                }
             }
         }
     }
@@ -345,7 +382,7 @@ impl<'a> ByteCode for Terminator<'a> {
             TerminatorKind::Assert{ref cond, expected, msg: _, target, cleanup} => {
                 cond.as_rvalue(env);
                 env.add(OpCode::ConstValue(R_BoxedValue::Bool(expected)));
-                env.add(OpCode::BinOp(BinOp::Eq));
+                env.add(OpCode::BinOp(bytecode::BinOp::Eq));
                 env.opcodes.push(MetaOpCode::GotoIf(target));
                 // XXX: handle msg
                 if let Some(bb) = cleanup {
@@ -508,13 +545,13 @@ impl<'a> ByteCode for Rvalue<'a> {
             Rvalue::CheckedBinaryOp(binop, ref left, ref right) => {
                 left.as_rvalue(env);
                 right.as_rvalue(env);
-                env.add(OpCode::CheckedBinOp(binop));
+                env.add(OpCode::CheckedBinOp(bytecode::BinOp::new(binop)));
             },
 
             Rvalue::BinaryOp(binop, ref left, ref right) => {
                 left.as_rvalue(env);
                 right.as_rvalue(env);
-                env.add(OpCode::BinOp(binop));
+                env.add(OpCode::BinOp(bytecode::BinOp::new(binop)));
             },
 
             Rvalue::Aggregate(AggregateKind::Tuple, ref vec) => {
@@ -558,7 +595,8 @@ impl<'a> ByteCode for Rvalue<'a> {
 
             Rvalue::Ref(ref _region, ref kind, ref lvalue) => {
                 lvalue.as_rvalue(env);
-                env.add(OpCode::Ref(*kind));
+                // env.add(OpCode::Ref(*kind));
+                env.add(OpCode::Ref);
             },
 
             // example: [0; 5] -> [0, 0, 0, 0, 0]
@@ -590,6 +628,10 @@ impl<'a> ByteCode for Rvalue<'a> {
                     UnOp::Not => OpCode::Not,
                     UnOp::Neg => OpCode::Neg,
                 });
+            },
+
+            Rvalue::Box(ref t) => {
+                println!("{:?}", t);
             },
 
             ref other => {
@@ -706,11 +748,14 @@ pub fn generate_bytecode<'a, 'tcx>(context: &'a Context<'a, 'tcx>, main: DefId) 
     program.load_fn_from_def_id(main);
     // println!("];");
 
-    println!("let program = [");
-    for idx in 0..program.cache.len() {
-        let func = program.cache.get(&idx).unwrap();
-        let output: Vec<String> = func.opcodes.iter().map(|oc|oc.to_rs()).collect();
-        println!("    [{}],", output.join(", "));
+    println!("let program = [ &[], ");
+    for idx in 1..program.cache.len() {
+        if let Some(func) = program.cache.get(&idx) {
+            let output: Vec<String> = func.opcodes.iter().map(|oc|oc.to_rs()).collect();
+            println!("    [{}],", output.join(", "));
+        } else {
+            println!("    [],", );
+        }
     }
     println!("];");
             // let output: Vec<String> = mir_analyser.opcodes.iter().map(|oc|oc.to_rs()).collect();
